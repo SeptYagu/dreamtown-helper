@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.1
+// @name         梦想小镇日常一体化 v3.2
 // @namespace    http://tampermonkey.net/
-// @version      3.1
+// @version      3.2
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,16 @@
 // ==/UserScript==
 
 /*
+ * v3.2 变更（2026-07-13 26h+）
+ * - 面板开关顺序与 AutoPilot.PLAN 完全对齐（1-11 项）
+ * - MOD.box.match 增加 /xz/bar（酒吧中转页内可直接开宝箱）
+ * - MOD.foodCoupon.match 移除 /xz/warehouse（避免与 bag 步骤导航冲突）
+ * - MOD.facility 库存阈值 5 → 10，库存不足时优先跳转购买再使用
+ * - MOD.restaurant 改用独立 restaurant_remaining_floors 状态，避免与 Scheduler.phase 冲突
+ * - 新增 ⏹ 立即停止按钮 + Esc 快捷键，紧急停止写 autopilot_emergency_stop
+ * - AutoPilot 续跑增加 iter 计数（>80 强制停止）+ 5s 同页去重
+ * - 面板标题实时显示当前步骤（如 "▶ 5/11 bag"）
+ *
  * v3.1 变更（2026-07-13）
  * - 市场新增常驻菜补货：符合价格条件时将 1/2 级菜补到 950
  * - 2 级鸡肉、猪肉不受单价限制，库存不足时强制补货
@@ -162,24 +172,27 @@
   };
 
   // ==================== 模块注册表 ====================
+  // 顺序：与 AutoPilot.PLAN 完全一致；非 PLAN 项（market/foodCoupon/recipe）放末尾
   // schedule: daily(每日7:30±15min) | hourly(整点) | restaurant(17-45min随机) | guardian(24h硬定时)
   //  | recipe(24h硬定时) | meal(每日3期) | facility(智能:剩余+1h)
   // 默认开关：与日常强相关且安全的默认开，付费/风险操作默认关
   const MODULE_DEFS = [
-    { id: 'signIn',     label: '每日签到',     default: true,  schedule: 'daily' },
-    { id: 'wish',       label: '许愿树(免费)', default: true,  schedule: 'daily' },
-    { id: 'energy',     label: '吃饭/体力',    default: true,  schedule: 'meal' },
-    { id: 'facility',   label: '设施安装',     default: true,  schedule: 'facility' },
-    { id: 'god',        label: '食神拜访',     default: true,  schedule: 'daily' },
-    { id: 'market',     label: '食材采购',     default: false, schedule: 'hourly' },  // 花钱
+    // —— AutoPilot PLAN 顺序（11 项）——
+    { id: 'signIn',     label: '1. 每日签到',     default: true,  schedule: 'daily' },
+    { id: 'wish',       label: '2. 许愿树(免费)', default: true,  schedule: 'daily' },
+    { id: 'god',        label: '3. 食神拜访',     default: true,  schedule: 'daily' },
+    { id: 'box',        label: '4. 免费宝箱',     default: true,  schedule: 'daily' },
+    { id: 'season',     label: '5. 季节签到',     default: true,  schedule: 'daily' },
+    { id: 'egg',        label: '6. 免费扭蛋',     default: true,  schedule: 'daily' },
+    { id: 'energy',     label: '7. 吃饭/体力',    default: true,  schedule: 'meal' },
+    { id: 'restaurant', label: '8. 餐厅添油',     default: true,  schedule: 'restaurant' },  // 翻柜/打蟑默认关
+    { id: 'facility',   label: '9. 设施安装',     default: true,  schedule: 'facility' },
+    { id: 'bag',        label: '10. 礼包开启',    default: true,  schedule: 'daily' },
+    { id: 'guardian',   label: '11. 守护者(爆裂)', default: true, schedule: 'guardian' },
+    // —— 不在 PLAN 内，可单独运行 ——
+    { id: 'market',     label: '食材采购(整点)', default: false, schedule: 'hourly' },  // 花钱
     { id: 'foodCoupon', label: '食材券(已停用)', default: false, schedule: 'daily' }, // 旧 propId 失效
-    { id: 'bag',        label: '礼包开启',     default: true,  schedule: 'daily' },
-    { id: 'restaurant', label: '餐厅添油',     default: true,  schedule: 'restaurant' },  // 翻柜/打蟑默认关
-    { id: 'box',        label: '免费宝箱',     default: true,  schedule: 'daily' },
-    { id: 'recipe',     label: '食谱升级',     default: false, schedule: 'recipe' },   // 花钱
-    { id: 'guardian',   label: '守护者(爆裂)', default: true,  schedule: 'guardian' },
-    { id: 'season',     label: '季节签到',     default: true,  schedule: 'daily' },
-    { id: 'egg',        label: '免费扭蛋',     default: true,  schedule: 'daily' },
+    { id: 'recipe',     label: '食谱升级',       default: false, schedule: 'recipe' },   // 花钱
   ];
 
   // 初始化 GM 默认值
@@ -225,6 +238,7 @@
         </details>
         <button class="run-btn" id="dxzxx-run">▶ 立即执行本页</button>
         <button class="run-btn" id="dxzxx-autopilot" style="background:#FF9800;color:#000;">🚀 自动跑全套日常</button>
+        <button class="run-btn" id="dxzxx-stop" style="background:#f44;color:#fff;display:none;">⏹ 立即停止（Esc）</button>
         <details id="dxzxx-sched-wrap" style="margin-top:6px;">
           <summary style="cursor:pointer;color:#fff;font-size:13px;padding:6px;background:rgba(255,152,0,0.25);border-radius:4px;">⏰ 调度器（穷举 + 定时）</summary>
           <div style="padding:6px;background:rgba(0,0,0,0.15);border-radius:4px;margin-top:4px;">
@@ -280,6 +294,7 @@
           // 启动后立即 continue 一次
           setTimeout(() => AutoPilot.continue(), 500);
         }
+        Panel.refreshAutopilotUI();
       });
       panel.querySelector('#dxzxx-sched').addEventListener('click', () => {
         if (Scheduler.isOn()) {
@@ -289,17 +304,67 @@
         }
         Panel.refreshSchedUI();
       });
+      // Esc 紧急停止（同时停 AutoPilot 和 Scheduler）
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          Utils.gset('autopilot_emergency_stop', true);
+          let stopped = false;
+          if (AutoPilot.isOn()) { AutoPilot.stop('Esc 紧急停止'); stopped = true; }
+          if (Scheduler.isOn()) { Scheduler.stop('Esc 紧急停止'); stopped = true; }
+          if (stopped) {
+            Panel.refreshAutopilotUI();
+            Panel.refreshSchedUI();
+            Utils.showStatus('已停止', 'Esc 紧急停止触发', '#f44');
+          }
+        }
+      });
       panel.querySelector('#dxzxx-sched-refresh').addEventListener('click', () => {
         Scheduler.computeAll();
         Scheduler.scheduleNext();
         Panel.refreshSchedUI();
       });
       panel.querySelector('#dxzxx-hide').addEventListener('click', () => Panel.hide());
+      panel.querySelector('#dxzxx-stop').addEventListener('click', () => {
+        Utils.gset('autopilot_emergency_stop', true);
+        if (AutoPilot.isOn()) AutoPilot.stop('面板停止');
+        if (Scheduler.isOn()) Scheduler.stop('面板停止');
+        Panel.refreshAutopilotUI();
+        Panel.refreshSchedUI();
+        Utils.showStatus('已停止', '面板停止按钮触发', '#f44');
+      });
 
       // 初始显示调度器状态
       Panel.refreshSchedUI();
+      Panel.refreshAutopilotUI();
       // 定时刷新状态显示
-      setInterval(() => Panel.refreshSchedUI(), 10000);
+      setInterval(() => { Panel.refreshSchedUI(); Panel.refreshAutopilotUI(); }, 5000);
+    },
+
+    refreshAutopilotUI() {
+      const btn = document.getElementById('dxzxx-autopilot');
+      const stopBtn = document.getElementById('dxzxx-stop');
+      if (!btn) return;
+      const on = AutoPilot.isOn();
+      if (on) {
+        btn.textContent = '⏸ 停止自动驾驶';
+        btn.style.background = '#f44';
+        btn.style.color = '#fff';
+        if (stopBtn) stopBtn.style.display = '';
+        // 在面板标题下显示当前步骤
+        const state = Utils.gget('autopilot_state', {});
+        const stepIdx = state.stepIndex || 0;
+        const step = AutoPilot.PLAN[stepIdx];
+        const stepName = step ? step.module : '已完成';
+        const h3 = document.querySelector('#dxzxx-panel h3');
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.0 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+      } else {
+        btn.textContent = '🚀 自动跑全套日常';
+        btn.style.background = '#FF9800';
+        btn.style.color = '#000';
+        if (stopBtn) stopBtn.style.display = 'none';
+        const h3 = document.querySelector('#dxzxx-panel h3');
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.0`;
+      }
     },
 
     refreshSchedUI() {
@@ -454,7 +519,7 @@
       { name: '海报',   setHref: '/xz/restaurant_facility_set_2_0', setupText: '长效手绘海报', propId: 14, buyPage: '/xz/prop_14' },
       { name: '老鼠夹', setHref: '/xz/restaurant_facility_set_4_0', setupText: '长效老鼠夹',   propId: 40, buyPage: '/xz/prop_40' },
     ],
-    MIN_COUNT: 5,
+    MIN_COUNT: 10,  // 库存低于此值时自动补到 10+
     async run() {
       const path = location.pathname;
 
@@ -484,33 +549,46 @@
           Utils.log(`设施: ${path} 非目标，跳过`);
           return;
         }
-        // 找包含 setupText 的 p 行 → 其内的"使用"按钮
+        // 找包含 setupText 的 p 行
         const itemRow = Array.from(document.querySelectorAll('p')).find(p =>
           p.textContent.includes(target.setupText)
         );
         if (itemRow) {
+          // 解析库存：尝试多种格式 "× N" / "(N个)" / "拥有N个" / "剩余N"
+          const countMatch = itemRow.textContent.match(/[×x]\s*(\d+)/) ||
+                             itemRow.textContent.match(/[（(](\d+)\s*个?[）)]/) ||
+                             itemRow.textContent.match(/拥有\s*(\d+)\s*个/) ||
+                             itemRow.textContent.match(/剩余\s*(\d+)/);
+          const have = countMatch ? +countMatch[1] : 0;
+          Utils.log(`设施: ${target.setupText} 库存 ${have}`);
+
+          // 库存 < MIN_COUNT 时优先去购买（即使有"使用"按钮也先补库存）
+          if (have < this.MIN_COUNT) {
+            const buyLink = Array.from(document.querySelectorAll('a')).find(a =>
+              (a.getAttribute('href') || '') === target.buyPage
+            );
+            if (buyLink) {
+              await Utils.sleep(Utils.randMs(1, 2));
+              Utils.click(buyLink);
+              Utils.log(`设施: 库存 ${have} < ${this.MIN_COUNT}，跳购买 ${target.buyPage}`);
+              return;
+            }
+            Utils.warn(`设施: 库存不足但未找到购买链接 ${target.buyPage}`);
+            return;
+          }
+
+          // 库存够 → 找"使用"按钮
           const useBtn = Array.from(itemRow.querySelectorAll('a')).find(a => a.textContent.trim() === '使用');
           if (useBtn) {
             await Utils.sleep(Utils.randMs(1, 2));
             Utils.click(useBtn);
-            Utils.log(`设施: 已使用 ${target.setupText}`);
+            Utils.log(`设施: 已使用 ${target.setupText} (库存 ${have})`);
             return;
           }
-          // 找到行但没"使用"按钮 → 可能库存 0，跳购买页
-          const countMatch = itemRow.textContent.match(/×\s*(\d+)/);
-          const have = countMatch ? +countMatch[1] : 0;
-          Utils.log(`设施: ${target.setupText} 库存 ${have}，< ${this.MIN_COUNT} 时跳转购买`);
+          Utils.log(`设施: 库存 ${have} 充足但未找到使用按钮`);
+          return;
         }
-        // 库存不足：跳转购买页
-        const target2 = this.TARGETS.find(t => path === t.setHref);
-        const backToBuy = Array.from(document.querySelectorAll('a')).find(a =>
-          (a.getAttribute('href') || '') === target2.buyPage
-        );
-        if (backToBuy) {
-          await Utils.sleep(Utils.randMs(1, 2));
-          Utils.click(backToBuy);
-          Utils.log(`设施: 跳转购买 ${target2.buyPage}`);
-        }
+        Utils.log(`设施: 未找到 ${target.setupText} 行`);
         return;
       }
 
@@ -521,6 +599,16 @@
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(buy10);
           Utils.log(`设施: 购买10个 ${path.split('_').pop()}`);
+          return;
+        }
+        // 备用：找其他购买链接
+        const anyBuy = Array.from(document.querySelectorAll('a')).find(a =>
+          (a.textContent || '').includes('购买') && (a.getAttribute('onclick') || '').match(/buy\(\s*0\s*,\s*\d+\s*,\s*\d+/)
+        );
+        if (anyBuy) {
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(anyBuy);
+          Utils.log('设施: 备用购买链接已点击');
         }
       }
 
@@ -736,8 +824,9 @@
   // 旧 propIds (244/21-25/245/224) 在新版 warehouse_1_0 不再存在
   // 站点已整合到 warehouse_1_0 的综合道具栏，旧的"食材随机券"概念似乎已弃用
   // 保留模块位置但默认关闭
+  // 注意：只匹配 /xz/warehouse_1_0；不要匹配 /xz/warehouse 避免与 bag 步骤导航冲突
   MOD.foodCoupon = {
-    match: (p) => p === '/xz/warehouse_1_0' || p === '/xz/warehouse',
+    match: (p) => p === '/xz/warehouse_1_0',
     schedule: 'daily',
     async run() {
       Utils.warn('食材券模块: 旧 propId 失效，已禁用。如需启用请更新 propId。');
@@ -760,33 +849,37 @@
   };
 
   // ----- 9. 餐厅管理（17-45min 随机循环）-----
+  // 关键修复：原实现把剩余楼层存在 sched_phase，会与 Scheduler 状态冲突
+  // 现改用 restaurant_remaining_floors 独立 GM 字段，避免共享状态
   MOD.restaurant = {
     match: (p) => p === '/xz/restaurant' || /\/xz\/restaurant_\d+_\d+/.test(p),
     schedule: 'restaurant',
 
     // 9.1 概览页：添油 + 扫感染楼层 → 导航去第一层
-    async processOverview(phase) {
+    async processOverview() {
       await this.addOil();
 
       if (!Utils.gget('restaurant_cockroach', false)) {
         Utils.log('餐厅: 蟑螂开关关，跳过楼层扫描');
+        Utils.gset('restaurant_remaining_floors', []);
         return;
       }
 
       const infected = this.detectInfectedFloors();
       if (infected.length === 0) {
         Utils.log('餐厅: 无感染楼层');
+        Utils.gset('restaurant_remaining_floors', []);
         return;
       }
 
       const [first, ...rest] = infected;
-      Utils.gset('sched_phase', { ...phase, remainingFloors: rest, currentFloor: first });
+      Utils.gset('restaurant_remaining_floors', rest);
       Utils.log(`餐厅: ${infected.length} 层感染 (${infected.join(',')})，先去 ${first} 楼`);
       await this.navigateToFloor(first);
     },
 
     // 9.2 楼层页：打蟑 + 翻柜 + 跳下一感染楼层（或回概览）
-    async processFloor(phase) {
+    async processFloor() {
       if (Utils.gget('restaurant_cockroach', false)) {
         const roachBtns = Array.from(document.querySelectorAll("a[onclick^='killCockroach']"));
         if (roachBtns.length > 0) {
@@ -805,15 +898,14 @@
         }
       }
 
-      const remaining = (phase && phase.remainingFloors) || [];
+      const remaining = Utils.gget('restaurant_remaining_floors', []);
       if (remaining.length > 0) {
         const [next, ...rest] = remaining;
-        Utils.gset('sched_phase', { ...phase, remainingFloors: rest, currentFloor: next });
+        Utils.gset('restaurant_remaining_floors', rest);
         Utils.log(`餐厅: 剩余 ${rest.length + 1} 层，去 ${next} 楼`);
         await this.navigateToFloor(next);
       } else {
         Utils.log('餐厅: 全部处理完，回概览');
-        Utils.gset('sched_phase', { ...phase, remainingFloors: [] });
         await this.navigateToOverview();
       }
     },
@@ -889,43 +981,61 @@
         Utils.click(link);
       } else {
         Utils.warn(`餐厅: 找不到 ${floor} 楼链接，清空剩余楼层`);
-        const phase = Utils.gget('sched_phase', null);
-        if (phase) Utils.gset('sched_phase', { ...phase, remainingFloors: [] });
+        Utils.gset('restaurant_remaining_floors', []);
       }
     },
 
     // 导航回概览
     async navigateToOverview() {
-      const link = Array.from(document.querySelectorAll('a')).find(a =>
+      // 优先用"返回"链接
+      const backLink = Array.from(document.querySelectorAll('a')).find(a => {
+        const t = (a.textContent || '').trim();
+        return t === '返回' || t === '返回前页' || t === '返回餐厅' || t === '我的餐厅';
+      });
+      const link = backLink || Array.from(document.querySelectorAll('a')).find(a =>
         (a.getAttribute('href') || '') === '/xz/restaurant'
       );
       if (link) {
         await Utils.sleep(Utils.randMs(1, 2));
         Utils.click(link);
-      } else {
-        Utils.warn('餐厅: 找不到概览链接');
+        return;
       }
+      Utils.warn('餐厅: 找不到概览链接');
     },
 
     async run() {
       const path = location.pathname;
-      const phase = Utils.gget('sched_phase', null);
-
       if (path === '/xz/restaurant') {
-        await this.processOverview(phase);
+        await this.processOverview();
         return;
       }
       if (/\/xz\/restaurant_\d+_\d+/.test(path)) {
-        await this.processFloor(phase);
+        await this.processFloor();
       }
     },
   };
 
   // ----- 10. 免费宝箱 + 神话级宝箱 -----
+  // 同时匹配 /xz/box 与 /xz/bar（酒吧含开宝箱页面）— 防止 AutoPilot 导航到 /xz/bar 后没有模块接管
   MOD.box = {
-    match: (p) => p === '/xz/box',
+    match: (p) => p === '/xz/box' || p === '/xz/bar',
     schedule: 'daily',
     async run() {
+      // /xz/bar 是中转页：尝试点 "开宝箱" 跳到 /xz/box 再处理
+      if (location.pathname === '/xz/bar') {
+        const boxLink = Array.from(document.querySelectorAll('a')).find(a =>
+          (a.textContent || '').includes('开宝箱') || (a.getAttribute('href') || '') === '/xz/box'
+        );
+        if (boxLink) {
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(boxLink);
+          Utils.log('宝箱: 从酒吧跳转到开宝箱');
+          return;
+        }
+        Utils.log('宝箱: 酒吧页无开宝箱链接，跳过');
+        return;
+      }
+
       // 神话级宝箱优先（200 进度满）
       const mythText = Array.from(document.querySelectorAll('.m_room p')).find(p =>
         p.textContent.includes('神话级宝箱') && p.textContent.includes('进度')
@@ -1642,6 +1752,8 @@
       if (typeof Scheduler !== 'undefined' && Scheduler.isOn()) {
         Scheduler.stop('AutoPilot 启动');
       }
+      // 重置会话级 lastPage 记录（用于去重）
+      Utils.gset('autopilot_session', { id: Date.now(), lastPage: '', lastPageAt: 0, iter: 0 });
       Utils.gset(this.stateKey, { enabled: true, stepIndex: 0, startedAt: Date.now() });
       Utils.log('▶▶ 自动计划启动');
       Utils.showStatus('自动驾驶', '启动中…', '#FF9800');
@@ -1651,6 +1763,7 @@
 
     stop(reason = '') {
       Utils.gset(this.stateKey, { enabled: false });
+      Utils.gset('autopilot_session', null);
       Utils.log(`⏹ 自动计划停止${reason ? ': ' + reason : ''}`);
       Utils.showStatus('自动驾驶', '已停止', '#f44');
     },
@@ -1659,7 +1772,26 @@
       const state = Utils.gget(this.stateKey, null);
       if (!state || !state.enabled) return;
 
+      // 紧急停止标志（外部 Esc/按钮可置位）
+      if (Utils.gget('autopilot_emergency_stop', false)) {
+        Utils.gset('autopilot_emergency_stop', false);
+        this.stop('紧急停止');
+        return;
+      }
+
+      // 会话级去重：同页 5s 内重复到达则跳过
+      const session = Utils.gget('autopilot_session', null) || { lastPage: '', lastPageAt: 0, iter: 0 };
       const path = location.pathname;
+      const now = Date.now();
+      session.iter = (session.iter || 0) + 1;
+      // 安全网：单次会话 iter > 80 强制停止（防止真死循环）
+      if (session.iter > 80) {
+        Utils.warn(`自动驾驶: 单次会话迭代 ${session.iter} 次超限，强制停止`);
+        this.stop('迭代超限保护');
+        return;
+      }
+      Utils.gset('autopilot_session', session);
+
       const stepIdx = state.stepIndex || 0;
       const step = this.PLAN[stepIdx];
 
@@ -1673,6 +1805,17 @@
       }
 
       const targetPath = step.navSteps[step.navSteps.length - 1].hrefMatch;
+      Utils.log(`自动驾驶: iter=${session.iter} step=${stepIdx + 1}/${this.PLAN.length} (${step.module}) path=${path} target=${targetPath}`);
+
+      // 同页快速去重：5s 内已处理过同 path → advance 跳过
+      if (session.lastPage === path && (now - (session.lastPageAt || 0)) < 5000) {
+        Utils.log(`自动驾驶: ${path} 5s 内重复，跳过 advance`);
+        this.advance();
+        return;
+      }
+      session.lastPage = path;
+      session.lastPageAt = now;
+      Utils.gset('autopilot_session', session);
 
       if (path === targetPath) {
         // 到达目标 → 运行模块
@@ -1702,7 +1845,7 @@
         await this.gotoStep(step);
       } else {
         // 在其他页面（如上一步子页遗留）→ 先回主页
-        Utils.log(`计划: 当前 ${path}，先回主页`);
+        Utils.log(`计划: 当前 ${path}（非目标非主页），先回主页`);
         await this.navigateToHome();
       }
     },
@@ -1831,6 +1974,8 @@
       const state = Utils.gget('autopilot_state', {});
       Utils.showStatus('自动驾驶', `步骤 ${(state.stepIndex || 0) + 1}/${AutoPilot.PLAN.length}`, '#FF9800');
     }
+    // 同步刷新面板按钮状态
+    setTimeout(() => { Panel.refreshAutopilotUI(); }, 200);
     setTimeout(() => Router.run(), 800);
   }
 
