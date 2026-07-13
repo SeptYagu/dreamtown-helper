@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.3
+// @name         梦想小镇日常一体化 v3.4
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      3.4
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,12 @@
 // ==/UserScript==
 
 /*
+ * v3.4 变更（2026-07-13 27h+）
+ * - 【食谱】彻底禁用万能食材升级：删除 processUniversal 方法、useUniversal 配置、面板开关
+ *   findUpgradeButton 重命名为 findNormalUpgradeButton（语义清晰）
+ *   /xz/cook_universal_* 页检测到直接 returnToList，不进入不操作
+ * - 清理无用变量 checkConditions 中的 hasGreen
+ *
  * v3.3 变更（2026-07-13 27h+）
  * - AutoPilot.PLAN 扩展到 13 步，纳入食材券 + 食谱升级
  * - 食材券模块重写：综合旧 v2.4 脚本的 8 种 propId（244/21-25/245/224）+ 新页面 fallback
@@ -239,7 +245,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.0</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.4</h3><div id="dxzxx-rows"></div>
         <details>
           <summary>餐厅子开关</summary>
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
@@ -260,7 +266,6 @@
             <option value="金牌5级">升级到金牌5级</option>
           </select>
           <div class="row sub"><label>📖 自动学习新食谱</label><span class="toggle ${Utils.gget('recipe_learn', true) ? 'on' : 'off'}" data-sub="recipe_learn">${Utils.gget('recipe_learn', true) ? '开' : '关'}</span></div>
-          <div class="row sub"><label>🧪 万能食材兜底升级</label><span class="toggle ${Utils.gget('recipe_use_universal', true) ? 'on' : 'off'}" data-sub="recipe_use_universal">${Utils.gget('recipe_use_universal', true) ? '开' : '关'}</span></div>
         </details>
         <details>
           <summary>自动驾驶流程（13 步）</summary>
@@ -399,14 +404,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.0 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.4 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 自动跑全套日常';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.0`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.4`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -1224,17 +1229,14 @@
   // ----- 12. 食谱升级（24h 硬定时）-----
   // 综合旧 v4.0 脚本 + 新页面适配：
   //   - 列表页（cookbook_*）：扫描 .gen_background_blue.s_room.s_font 找"可升级"项进入详情
-  //   - 详情页（cook_<id>）：学习 → 升级 → 万能食材升级
+  //   - 详情页（cook_<id>）：学习 → 升级（仅普通食材，禁用万能食材）
   //   - 条件检查：食材条件（绿/红）+ 街道条件（其他街道未达金牌会失败）
   //   - 升级按钮：text='升级'，onclick 包含 study(，href 不含 universal
-  //   - 万能食材：text 含"万能食材"，href 含 /cook_universal_
   //   - 失败检测：含"食谱学习失败"或"未达成"的容器存在则跳过
-  //   - 翻页：找"下一页"链接，href 包含 cookbook_
+  //   - 翻页：找"下一页"链接
   // 配置（GM 持久化）：
   //   recipe_target_level: 目标等级（'off'/'特色'/'上品'/'极品'/'金牌'/'金牌1-10级'）
   //   recipe_learn: 是否自动学习（默认 true）
-  //   recipe_use_universal: 万能食材兜底（默认 true）
-  //   recipe_last_cookbook: 上次扫描的 cookbook 页（避免每次都从首页开始）
   MOD.recipe = {
     match: (p) => /\/xz\/cook_(\d+)?/.test(p) || /\/xz\/cookbook_/.test(p),
     schedule: 'recipe',
@@ -1251,18 +1253,12 @@
       return {
         targetLevel: Utils.gget('recipe_target_level', '金牌'),
         learn: Utils.gget('recipe_learn', true),
-        useUniversal: Utils.gget('recipe_use_universal', true),
       };
     },
 
     // 主入口
     async run() {
       const path = location.pathname;
-      // 万能食材升级页：直接点"使用万能食材升级"
-      if (/\/xz\/cook_universal_/.test(path)) {
-        await this.processUniversal();
-        return;
-      }
       // 详情页：学习 / 升级
       if (/^\/xz\/cook_\d+/.test(path)) {
         await this.processDetail();
@@ -1271,6 +1267,12 @@
       // 列表页：找可升级项
       if (/cookbook_/.test(path)) {
         await this.processCookbook();
+        return;
+      }
+      // 万能食材升级页（/xz/cook_universal_*）：禁用！不进入，不操作
+      if (/\/xz\/cook_universal_/.test(path)) {
+        Utils.log('食谱: 万能食材升级已禁用，跳过该页');
+        this.returnToList();
         return;
       }
     },
@@ -1336,7 +1338,6 @@
       const sections = document.querySelectorAll('.gen_background_blue.s_room.s_font');
       for (const section of sections) {
         for (const p of section.querySelectorAll('p')) {
-          // 已学习的项有"已学习"或包含等级文字
           const txt = p.textContent;
           if (/已学习|可升级|等级[:：]/.test(txt)) continue;
           const link = p.querySelector('a[href^="/xz/cook_"]');
@@ -1352,7 +1353,6 @@
     findNextPage() {
       return Array.from(document.querySelectorAll('a')).find(a => {
         const t = (a.textContent || '').trim();
-        const h = a.getAttribute('href') || '';
         return t === '下一页' || t === '下一頁' || t === '>>' || t === 'Next';
       }) || null;
     },
@@ -1379,55 +1379,22 @@
         }
       }
 
-      // 12.2.2 升级按钮
-      const upgradeBtn = this.findUpgradeButton();
+      // 12.2.2 升级按钮（仅普通食材升级，不点万能食材）
+      const upgradeBtn = this.findNormalUpgradeButton();
       if (upgradeBtn && this.checkConditions()) {
         await Utils.sleep(Utils.randMs(1, 2));
         Utils.click(upgradeBtn);
-        Utils.log('食谱: 已点升级');
+        Utils.log('食谱: 已点升级（普通食材）');
         return;
       }
 
-      // 12.2.3 万能食材升级（兜底）
-      if (cfg.useUniversal) {
-        const universalLink = Array.from(document.querySelectorAll('a')).find(a => {
-          const t = (a.textContent || '').trim();
-          const h = a.getAttribute('href') || '';
-          return /万能食材/.test(t) || /\/cook_universal_/.test(h);
-        });
-        if (universalLink) {
-          await Utils.sleep(Utils.randMs(1, 2));
-          Utils.click(universalLink);
-          Utils.log('食谱: 跳万能食材升级页');
-          return;
-        }
-      }
-
-      // 12.2.4 完成 → 返回列表
-      Utils.log('食谱: 无可执行动作，返回列表');
+      // 12.2.3 无可执行动作 → 返回列表（不点万能食材）
+      Utils.log('食谱: 条件不满足或已达目标，返回列表');
       this.returnToList();
     },
 
-    // 12.3 万能食材升级页
-    async processUniversal() {
-      // 找"确认升级"或"使用万能食材升级"按钮
-      const confirmBtn = Array.from(document.querySelectorAll('a')).find(a => {
-        const t = (a.textContent || '').trim();
-        const oc = a.getAttribute('onclick') || '';
-        return /万能食材.*升级|确认升级/.test(t) || /study\(/.test(oc);
-      });
-      if (confirmBtn) {
-        await Utils.sleep(Utils.randMs(1, 2));
-        Utils.click(confirmBtn);
-        Utils.log('食谱: 已点万能食材升级');
-        return;
-      }
-      Utils.log('食谱: 万能食材页无确认按钮');
-      this.returnToList();
-    },
-
-    // 找升级按钮（text='升级'，onclick 含 study(，href 不含 universal）
-    findUpgradeButton() {
+    // 找普通升级按钮（text='升级'，onclick 含 study(，href 不含 universal）
+    findNormalUpgradeButton() {
       return Array.from(document.querySelectorAll('a')).find(a => {
         const t = (a.textContent || '').trim();
         const oc = a.getAttribute('onclick') || '';
@@ -1443,26 +1410,23 @@
         p.textContent.includes('升级到') && p.textContent.includes('条件：')
       );
       if (!conditionTitle) {
-        // 没找到条件区，可能是已满级或无升级
         return false;
       }
       // 2) 条件区域：紧邻的 .gen_background_blue 容器
       let conditionContainer = null;
       const ownRoom = conditionTitle.closest('.s_room');
       if (ownRoom) {
-        // 在同房间内向下找
         let el = conditionTitle.nextElementSibling;
         while (el && !el.classList.contains('gen_background_blue')) {
           el = el.nextElementSibling;
         }
         if (el) conditionContainer = el;
-        if (!conditionContainer && ownRoom.nextElementSibling) {
-          conditionContainer = ownRoom.nextElementSibling.classList.contains('gen_background_blue')
-            ? ownRoom.nextElementSibling : null;
+        if (!conditionContainer && ownRoom.nextElementSibling &&
+            ownRoom.nextElementSibling.classList.contains('gen_background_blue')) {
+          conditionContainer = ownRoom.nextElementSibling;
         }
       }
       if (!conditionContainer) {
-        // 退化：直接在页面里找升级条件区域
         conditionContainer = document.querySelector('.gen_background_blue');
       }
       if (!conditionContainer) return false;
@@ -1471,20 +1435,16 @@
       const blocks = conditionContainer.querySelectorAll('p');
       for (const block of blocks) {
         const text = block.textContent.trim();
-        // 跳过非关键条件（纯描述行）
         if (!text) continue;
         // 关键条件：含"×"（食材数量）、"拥有"、"街道"、或"金牌"
         const isKey = /[×x]|拥有|街道|金牌|升级至/.test(text);
         if (!isKey) continue;
-        const hasGreen = block.querySelector('.gen_green') !== null;
         const hasRed = block.querySelector('.gen_red') !== null;
-        // 红色优先：任何 .gen_red 直接判失败
         if (hasRed) {
           Utils.log(`食谱: 条件未达 → ${text.slice(0, 40)}`);
           return false;
         }
-        // 没绿色也没红色（"未达成"等）也判失败
-        if (!hasGreen && /未达|不足|缺少/.test(text)) {
+        if (!block.querySelector('.gen_green') && /未达|不足|缺少/.test(text)) {
           Utils.log(`食谱: 条件未达 → ${text.slice(0, 40)}`);
           return false;
         }
@@ -1494,7 +1454,6 @@
 
     // 升级失败标记检测
     checkUpgradeFailure() {
-      // .gen_background_yellow.s_room.s_font.gen_red 容器含"食谱学习失败"或"当前街道未全部升级至金牌"
       const failContainers = document.querySelectorAll('.gen_background_yellow.s_room.s_font');
       for (const c of failContainers) {
         if (/食谱学习失败|当前街道未全部升级至金牌/.test(c.textContent)) {
