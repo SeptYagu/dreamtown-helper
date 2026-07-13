@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.2
+// @name         梦想小镇日常一体化 v3.3
 // @namespace    http://tampermonkey.net/
-// @version      3.2
+// @version      3.3
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,17 +15,20 @@
 // ==/UserScript==
 
 /*
- * v3.2 变更（2026-07-13 26h+）
- * - 面板开关顺序与 AutoPilot.PLAN 完全对齐（1-11 项）
- * - MOD.box.match 增加 /xz/bar（酒吧中转页内可直接开宝箱）
- * - MOD.foodCoupon.match 移除 /xz/warehouse（避免与 bag 步骤导航冲突）
- * - MOD.facility 库存阈值 5 → 10，库存不足时优先跳转购买再使用
- * - MOD.restaurant 改用独立 restaurant_remaining_floors 状态，避免与 Scheduler.phase 冲突
- * - 新增 ⏹ 立即停止按钮 + Esc 快捷键，紧急停止写 autopilot_emergency_stop
- * - AutoPilot 续跑增加 iter 计数（>80 强制停止）+ 5s 同页去重
- * - 面板标题实时显示当前步骤（如 "▶ 5/11 bag"）
+ * v3.3 变更（2026-07-13 27h+）
+ * - AutoPilot.PLAN 扩展到 13 步，纳入食材券 + 食谱升级
+ * - 食材券模块重写：综合旧 v2.4 脚本的 8 种 propId（244/21-25/245/224）+ 新页面 fallback
+ *   新增 /xz/food_random_<level> 页面的 random(level, 1000) 一键兑换
+ *   兑换完自动返回仓库；找不到任何可用券直接结束（不卡死）
+ * - 食谱升级模块重写：综合旧 v4.0 脚本的完整功能
+ *   - 等级映射 0-13（普通/特色/上品/极品/金牌1-10级）
+ *   - 目标等级 + 自动学习 + 万能食材兜底 三项配置（面板新加「食谱升级配置」区块）
+ *   - 条件检查：含 × / 拥有 / 街道 / 升级至 的关键块，红字或"未达"判失败
+ *   - 升级失败标记检测（gen_background_yellow 容器）
+ *   - 翻页支持（"下一页"链接）
+ * - 面板新增「自动驾驶流程（13 步）」预览块：实时显示顺序、当前步、启用状态
  *
- * v3.1 变更（2026-07-13）
+ * v3.2 变更（2026-07-13 26h+）
  * - 市场新增常驻菜补货：符合价格条件时将 1/2 级菜补到 950
  * - 2 级鸡肉、猪肉不受单价限制，库存不足时强制补货
  * - 市场金币不足后进入 24h 冷却，并支持跨刷新续购
@@ -172,27 +175,27 @@
   };
 
   // ==================== 模块注册表 ====================
-  // 顺序：与 AutoPilot.PLAN 完全一致；非 PLAN 项（market/foodCoupon/recipe）放末尾
+  // 顺序：与 AutoPilot.PLAN 完全一致；非 PLAN 项放末尾
   // schedule: daily(每日7:30±15min) | hourly(整点) | restaurant(17-45min随机) | guardian(24h硬定时)
   //  | recipe(24h硬定时) | meal(每日3期) | facility(智能:剩余+1h)
   // 默认开关：与日常强相关且安全的默认开，付费/风险操作默认关
   const MODULE_DEFS = [
-    // —— AutoPilot PLAN 顺序（11 项）——
+    // —— AutoPilot PLAN 顺序（13 项，含 foodCoupon/recipe）——
     { id: 'signIn',     label: '1. 每日签到',     default: true,  schedule: 'daily' },
     { id: 'wish',       label: '2. 许愿树(免费)', default: true,  schedule: 'daily' },
     { id: 'god',        label: '3. 食神拜访',     default: true,  schedule: 'daily' },
     { id: 'box',        label: '4. 免费宝箱',     default: true,  schedule: 'daily' },
     { id: 'season',     label: '5. 季节签到',     default: true,  schedule: 'daily' },
     { id: 'egg',        label: '6. 免费扭蛋',     default: true,  schedule: 'daily' },
-    { id: 'energy',     label: '7. 吃饭/体力',    default: true,  schedule: 'meal' },
-    { id: 'restaurant', label: '8. 餐厅添油',     default: true,  schedule: 'restaurant' },  // 翻柜/打蟑默认关
-    { id: 'facility',   label: '9. 设施安装',     default: true,  schedule: 'facility' },
-    { id: 'bag',        label: '10. 礼包开启',    default: true,  schedule: 'daily' },
-    { id: 'guardian',   label: '11. 守护者(爆裂)', default: true, schedule: 'guardian' },
+    { id: 'foodCoupon', label: '7. 食材券',       default: true,  schedule: 'daily' },  // 用旧 propId + 新页面适配
+    { id: 'energy',     label: '8. 吃饭/体力',    default: true,  schedule: 'meal' },
+    { id: 'restaurant', label: '9. 餐厅添油',     default: true,  schedule: 'restaurant' },  // 翻柜/打蟑默认关
+    { id: 'facility',   label: '10. 设施安装',    default: true,  schedule: 'facility' },
+    { id: 'bag',        label: '11. 礼包开启',    default: true,  schedule: 'daily' },
+    { id: 'recipe',     label: '12. 食谱升级',    default: true,  schedule: 'recipe' },    // 默认开；目标等级/学习开关可调
+    { id: 'guardian',   label: '13. 守护者(爆裂)', default: true, schedule: 'guardian' },
     // —— 不在 PLAN 内，可单独运行 ——
     { id: 'market',     label: '食材采购(整点)', default: false, schedule: 'hourly' },  // 花钱
-    { id: 'foodCoupon', label: '食材券(已停用)', default: false, schedule: 'daily' }, // 旧 propId 失效
-    { id: 'recipe',     label: '食谱升级',       default: false, schedule: 'recipe' },   // 花钱
   ];
 
   // 初始化 GM 默认值
@@ -225,6 +228,12 @@
         #dxzxx-panel .sub{padding-left:14px;font-size:11px;color:#666;}
         #dxzxx-panel details{margin-top:8px;padding-top:6px;border-top:1px solid #eee;}
         #dxzxx-panel summary{cursor:pointer;font-weight:bold;}
+        #dxzxx-panel select{width:100%;padding:4px;margin:4px 0;border:1px solid #ccc;border-radius:4px;font-size:12px;}
+        #dxzxx-panel .label{font-size:11px;color:#555;margin-top:4px;}
+        #dxzxx-panel .plan-list{font-size:11px;color:#333;padding:6px 4px;line-height:1.6;max-height:200px;overflow-y:auto;background:#f9f9f9;border-radius:4px;margin-top:4px;}
+        #dxzxx-panel .plan-list .step{display:flex;justify-content:space-between;padding:1px 4px;}
+        #dxzxx-panel .plan-list .step.current{background:#FFE082;font-weight:bold;border-radius:3px;}
+        #dxzxx-panel .plan-list .step.disabled{color:#aaa;text-decoration:line-through;}
         #dxzxx-fab{position:fixed;top:10px;right:10px;z-index:99999;background:#4fe;color:#000;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:bold;box-shadow:0 2px 8px rgba(0,0,0,.2);font-size:16px;}
       `);
 
@@ -235,6 +244,27 @@
           <summary>餐厅子开关</summary>
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
           <div class="row sub"><label>📦 自动翻橱柜</label><span class="toggle ${Utils.gget('restaurant_dig', false) ? 'on' : 'off'}" data-sub="restaurant_dig">${Utils.gget('restaurant_dig', false) ? '开' : '关'}</span></div>
+        </details>
+        <details>
+          <summary>食谱升级配置</summary>
+          <div class="label">目标等级</div>
+          <select id="dxzxx-recipe-level">
+            <option value="off">关闭升级</option>
+            <option value="特色">升级到特色</option>
+            <option value="上品">升级到上品</option>
+            <option value="极品">升级到极品</option>
+            <option value="金牌">升级到金牌</option>
+            <option value="金牌2级">升级到金牌2级</option>
+            <option value="金牌3级">升级到金牌3级</option>
+            <option value="金牌4级">升级到金牌4级</option>
+            <option value="金牌5级">升级到金牌5级</option>
+          </select>
+          <div class="row sub"><label>📖 自动学习新食谱</label><span class="toggle ${Utils.gget('recipe_learn', true) ? 'on' : 'off'}" data-sub="recipe_learn">${Utils.gget('recipe_learn', true) ? '开' : '关'}</span></div>
+          <div class="row sub"><label>🧪 万能食材兜底升级</label><span class="toggle ${Utils.gget('recipe_use_universal', true) ? 'on' : 'off'}" data-sub="recipe_use_universal">${Utils.gget('recipe_use_universal', true) ? '开' : '关'}</span></div>
+        </details>
+        <details>
+          <summary>自动驾驶流程（13 步）</summary>
+          <div id="dxzxx-plan-list" class="plan-list"></div>
         </details>
         <button class="run-btn" id="dxzxx-run">▶ 立即执行本页</button>
         <button class="run-btn" id="dxzxx-autopilot" style="background:#FF9800;color:#000;">🚀 自动跑全套日常</button>
@@ -275,6 +305,8 @@
               Scheduler.computeAll();
               Scheduler.scheduleNext();
             }
+            // 同步刷新 PLAN 列表显示
+            Panel.refreshPlanList();
           } else if (sub) {
             const cur = t.classList.contains('on');
             Utils.gset(sub, !cur);
@@ -284,6 +316,17 @@
           }
         });
       });
+
+      // 食谱等级下拉
+      const recipeLevel = panel.querySelector('#dxzxx-recipe-level');
+      if (recipeLevel) {
+        const cur = Utils.gget('recipe_target_level', '金牌');
+        recipeLevel.value = cur;
+        recipeLevel.addEventListener('change', () => {
+          Utils.gset('recipe_target_level', recipeLevel.value);
+          Utils.showStatus('食谱', `目标等级 → ${recipeLevel.value}`, '#4CAF50');
+        });
+      }
 
       panel.querySelector('#dxzxx-run').addEventListener('click', () => Router.run());
       panel.querySelector('#dxzxx-autopilot').addEventListener('click', () => {
@@ -365,6 +408,24 @@
         const h3 = document.querySelector('#dxzxx-panel h3');
         if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.0`;
       }
+      // 同步刷新 PLAN 列表
+      Panel.refreshPlanList();
+    },
+
+    // 渲染 PLAN 顺序列表
+    refreshPlanList() {
+      const list = document.getElementById('dxzxx-plan-list');
+      if (!list || typeof AutoPilot === 'undefined') return;
+      const state = Utils.gget('autopilot_state', {});
+      const curStep = state.enabled ? (state.stepIndex || 0) : -1;
+      const html = AutoPilot.PLAN.map((s, i) => {
+        const enabled = isEnabled(s.module);
+        const cls = [];
+        if (i === curStep) cls.push('current');
+        if (!enabled) cls.push('disabled');
+        return `<div class="step ${cls.join(' ')}"><span>${i + 1}. ${s.module}</span><span>${enabled ? '✅' : '⏸'}</span></div>`;
+      }).join('');
+      list.innerHTML = html;
     },
 
     refreshSchedUI() {
@@ -820,16 +881,99 @@
     },
   };
 
-  // ----- 7. 食材券（v2: 已停用）-----
-  // 旧 propIds (244/21-25/245/224) 在新版 warehouse_1_0 不再存在
-  // 站点已整合到 warehouse_1_0 的综合道具栏，旧的"食材随机券"概念似乎已弃用
-  // 保留模块位置但默认关闭
-  // 注意：只匹配 /xz/warehouse_1_0；不要匹配 /xz/warehouse 避免与 bag 步骤导航冲突
+  // ----- 7. 食材券（综合旧脚本 + 新页面结构）-----
+  // 旧脚本自动处理 8 种食材券（propId 244/21-25/245/224）：
+  //   1) 仓库页 (warehouse_1_0) 点 usePropUrl(1, propId) → 跳到 /xz/food_random_<level>
+  //   2) 食材随机页点 random(level, 1000) → 兑换
+  //   3) 兑换完自动返回仓库
+  // 新页面 (v3.x) warehouse_1_0 的 propUrl 选择器保持兼容（onclick="usePropUrl(1,N)"）
+  // 适配要点：
+  //   - propIds 合并旧 8 种 + 新页面常见的"食材/调料"类
+  //   - 找不到任何 propUrl 时直接返回（无券可领），不再死循环
+  //   - /xz/food_random_<level> 处理完成后自动点"返回仓库"
   MOD.foodCoupon = {
-    match: (p) => p === '/xz/warehouse_1_0',
+    match: (p) => p === '/xz/warehouse_1_0' || /\/xz\/food_random_/.test(p),
     schedule: 'daily',
+    CONFIG: {
+      // 旧脚本 8 种 + 新页面常见食材/调料券
+      PROP_IDS: [244, 21, 22, 23, 24, 25, 245, 224, 1, 2, 3, 4, 6, 7, 71, 80, 114, 115, 116, 117, 133, 142, 215, 220],
+    },
     async run() {
-      Utils.warn('食材券模块: 旧 propId 失效，已禁用。如需启用请更新 propId。');
+      const path = location.pathname;
+
+      // 7.1 食材随机页（/xz/food_random_<level>）：点"兑换"按钮
+      if (/\/xz\/food_random_/.test(path)) {
+        const level = path.split('_').pop().replace(/\D/g, '') || path.split('_').pop();
+        const allBtns = Array.from(document.querySelectorAll('a'));
+        // 优先找 random(level, 1000) 这种"全部兑换"
+        let exchangeBtn = allBtns.find(a => {
+          const oc = a.getAttribute('onclick') || '';
+          return oc.includes(`random(${level},1000)`) || oc.includes(`random(${parseInt(level)},1000)`);
+        });
+        // 退化：找任何 random(level, N) 按钮
+        if (!exchangeBtn) {
+          exchangeBtn = allBtns.find(a => {
+            const oc = a.getAttribute('onclick') || '';
+            return /random\(\s*\d+\s*,\s*\d+\s*\)/.test(oc);
+          });
+        }
+        if (exchangeBtn) {
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(exchangeBtn);
+          Utils.log(`食材券: 兑换 level=${level}`);
+          // 兑换后稍等再决定回仓库
+          await Utils.sleep(Utils.randMs(2, 3));
+          this.returnToWarehouse();
+          return;
+        }
+        // 没有兑换按钮 → 直接返回
+        Utils.log(`食材券: 兑换页无 random() 按钮，回仓库`);
+        this.returnToWarehouse();
+        return;
+      }
+
+      // 7.2 仓库页（/xz/warehouse_1_0）：找"食材券"类 usePropUrl → 点击
+      const card = this.findUsableCard();
+      if (card) {
+        const oc = card.getAttribute('onclick') || '';
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(card);
+        Utils.log(`食材券: 使用 ${oc}`);
+        return;
+      }
+      Utils.log('食材券: 仓库无可用券');
+    },
+
+    // 查找可用的食材券卡片
+    findUsableCard() {
+      // 优先精确匹配 propIds
+      const exact = Array.from(document.querySelectorAll('a[onclick^="usePropUrl(1,"]')).find(a => {
+        const m = (a.getAttribute('onclick') || '').match(/usePropUrl\(1,(\d+)\)/);
+        return m && this.CONFIG.PROP_IDS.includes(+m[1]);
+      });
+      if (exact) return exact;
+      // 退化：找任何 usePropUrl(1, N) — 名字含"食材"/"调料"/"随机"
+      const fallback = Array.from(document.querySelectorAll('a[onclick^="usePropUrl(1,"]')).find(a => {
+        const row = a.closest('p') || a.parentElement;
+        return row && /食材|调料|随机/.test(row.textContent);
+      });
+      return fallback || null;
+    },
+
+    // 返回食材券仓库页
+    returnToWarehouse() {
+      const backLink = Array.from(document.querySelectorAll('a')).find(a => {
+        const t = (a.textContent || '').trim();
+        const h = a.getAttribute('href') || '';
+        return t === '返回仓库' || t === '返回' || t === '返回前页' ||
+               h === '/xz/warehouse_1_0' || h === '/xz/warehouse' ||
+               /食材|仓库/.test(t);
+      });
+      if (backLink) {
+        Utils.sleep(Utils.randMs(1, 2)).then(() => Utils.click(backLink));
+        return;
+      }
+      Utils.warn('食材券: 找不到返回仓库链接');
     },
   };
 
@@ -1077,85 +1221,302 @@
     },
   };
 
-  // ----- 11. 食谱升级（24h 硬定时）-----
+  // ----- 12. 食谱升级（24h 硬定时）-----
+  // 综合旧 v4.0 脚本 + 新页面适配：
+  //   - 列表页（cookbook_*）：扫描 .gen_background_blue.s_room.s_font 找"可升级"项进入详情
+  //   - 详情页（cook_<id>）：学习 → 升级 → 万能食材升级
+  //   - 条件检查：食材条件（绿/红）+ 街道条件（其他街道未达金牌会失败）
+  //   - 升级按钮：text='升级'，onclick 包含 study(，href 不含 universal
+  //   - 万能食材：text 含"万能食材"，href 含 /cook_universal_
+  //   - 失败检测：含"食谱学习失败"或"未达成"的容器存在则跳过
+  //   - 翻页：找"下一页"链接，href 包含 cookbook_
+  // 配置（GM 持久化）：
+  //   recipe_target_level: 目标等级（'off'/'特色'/'上品'/'极品'/'金牌'/'金牌1-10级'）
+  //   recipe_learn: 是否自动学习（默认 true）
+  //   recipe_use_universal: 万能食材兜底（默认 true）
+  //   recipe_last_cookbook: 上次扫描的 cookbook 页（避免每次都从首页开始）
   MOD.recipe = {
     match: (p) => /\/xz\/cook_(\d+)?/.test(p) || /\/xz\/cookbook_/.test(p),
     schedule: 'recipe',
+
+    // 等级映射：旧脚本 v4.0 完整保留
+    LEVEL_MAP: {
+      '普通': 0, '特色': 1, '上品': 2, '极品': 3, '金牌': 4,
+      '金牌1级': 4, '金牌2级': 5, '金牌3级': 6, '金牌4级': 7, '金牌5级': 8,
+      '金牌6级': 9, '金牌7级': 10, '金牌8级': 11, '金牌9级': 12, '金牌10级': 13,
+    },
+
+    // 读取配置
+    getConfig() {
+      return {
+        targetLevel: Utils.gget('recipe_target_level', '金牌'),
+        learn: Utils.gget('recipe_learn', true),
+        useUniversal: Utils.gget('recipe_use_universal', true),
+      };
+    },
+
+    // 主入口
     async run() {
       const path = location.pathname;
-
-      // 11.1 列表页（cookbook_*）：找"可升级"项 → 进入详情
+      // 万能食材升级页：直接点"使用万能食材升级"
+      if (/\/xz\/cook_universal_/.test(path)) {
+        await this.processUniversal();
+        return;
+      }
+      // 详情页：学习 / 升级
+      if (/^\/xz\/cook_\d+/.test(path)) {
+        await this.processDetail();
+        return;
+      }
+      // 列表页：找可升级项
       if (/cookbook_/.test(path)) {
-        const sections = document.querySelectorAll('.gen_background_blue.s_room.s_font');
-        for (const section of sections) {
-          const p = Array.from(section.querySelectorAll('p')).find(pp =>
-            pp.querySelector('.gen_grey') &&
-            pp.querySelector('.gen_red') &&
-            pp.querySelector('.gen_red').textContent.includes('可升级')
-          );
-          if (p) {
-            const link = p.querySelector('a[href^="/xz/cook_"]');
-            if (link) {
-              await Utils.sleep(Utils.randMs(1, 2));
-              Utils.click(link);
-              Utils.log(`食谱: 进入 ${link.textContent.trim()}`);
-              return;
-            }
+        await this.processCookbook();
+        return;
+      }
+    },
+
+    // 12.1 列表页（cookbook_*）
+    async processCookbook() {
+      const cfg = this.getConfig();
+      const targetValue = this.LEVEL_MAP[cfg.targetLevel] ?? 4;
+
+      // 12.1.1 找"可升级"项：旧选择器（.gen_background_blue.s_room.s_font → p 含 .gen_grey + .gen_red 含"可升级"）
+      const upgradeItem = this.findUpgradeItem(targetValue);
+      if (upgradeItem) {
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(upgradeItem.link);
+        Utils.log(`食谱: 进入 ${upgradeItem.name} (${upgradeItem.level} → ${cfg.targetLevel})`);
+        return;
+      }
+
+      // 12.1.2 找未学习项（如果学习开关开）
+      if (cfg.learn) {
+        const learnItem = this.findLearnItem();
+        if (learnItem) {
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(learnItem.link);
+          Utils.log(`食谱: 学习 ${learnItem.name}`);
+          return;
+        }
+      }
+
+      // 12.1.3 当前页处理完 → 翻页
+      const nextPage = this.findNextPage();
+      if (nextPage) {
+        Utils.log('食谱: 翻到下一页');
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(nextPage);
+        return;
+      }
+      Utils.log('食谱: 当前列表已扫完');
+    },
+
+    // 找可升级项
+    findUpgradeItem(targetValue) {
+      const sections = document.querySelectorAll('.gen_background_blue.s_room.s_font');
+      for (const section of sections) {
+        for (const p of section.querySelectorAll('p')) {
+          const grey = p.querySelector('.gen_grey');
+          const red = p.querySelector('.gen_red');
+          if (!grey || !red) continue;
+          if (!red.textContent.includes('可升级')) continue;
+          const lvlText = grey.textContent.trim();
+          const cur = this.LEVEL_MAP[lvlText];
+          if (cur === undefined) continue;
+          if (cur >= targetValue) continue;
+          const link = p.querySelector('a[href^="/xz/cook_"]');
+          if (link) return { name: link.textContent.trim(), level: lvlText, link };
+        }
+      }
+      return null;
+    },
+
+    // 找未学习项（无"已学习"或"可升级"标记）
+    findLearnItem() {
+      const sections = document.querySelectorAll('.gen_background_blue.s_room.s_font');
+      for (const section of sections) {
+        for (const p of section.querySelectorAll('p')) {
+          // 已学习的项有"已学习"或包含等级文字
+          const txt = p.textContent;
+          if (/已学习|可升级|等级[:：]/.test(txt)) continue;
+          const link = p.querySelector('a[href^="/xz/cook_"]');
+          if (link) {
+            return { name: link.textContent.trim(), link };
           }
         }
-        Utils.log('食谱: 当前列表无可升级项');
+      }
+      return null;
+    },
+
+    // 找下一页
+    findNextPage() {
+      return Array.from(document.querySelectorAll('a')).find(a => {
+        const t = (a.textContent || '').trim();
+        const h = a.getAttribute('href') || '';
+        return t === '下一页' || t === '下一頁' || t === '>>' || t === 'Next';
+      }) || null;
+    },
+
+    // 12.2 详情页（cook_<id>）
+    async processDetail() {
+      const cfg = this.getConfig();
+
+      // 12.2.0 先检测升级失败标记
+      if (this.checkUpgradeFailure()) {
+        Utils.log('食谱: 检测到升级失败标记，跳过详情');
+        this.returnToList();
         return;
       }
 
-      // 11.2 详情页（cook_<id>）：先尝试学习，再尝试升级
-      const learnBtn = Utils.findByText('a', '学习');
-      if (learnBtn) {
+      // 12.2.1 学习：未学习时显示"学习"按钮
+      if (cfg.learn) {
+        const learnBtn = Utils.findByText('a', '学习');
+        if (learnBtn) {
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(learnBtn);
+          Utils.log('食谱: 已点学习');
+          return;
+        }
+      }
+
+      // 12.2.2 升级按钮
+      const upgradeBtn = this.findUpgradeButton();
+      if (upgradeBtn && this.checkConditions()) {
         await Utils.sleep(Utils.randMs(1, 2));
-        Utils.click(learnBtn);
-        Utils.log('食谱: 已点击学习');
+        Utils.click(upgradeBtn);
+        Utils.log('食谱: 已点升级');
         return;
       }
 
-      // 升级按钮: a[onclick="study(id, level)"] 文本"升级"，href 不含 universal
-      const upgradeBtn = Array.from(document.querySelectorAll('a')).find(a => {
-        const t = a.textContent.trim();
+      // 12.2.3 万能食材升级（兜底）
+      if (cfg.useUniversal) {
+        const universalLink = Array.from(document.querySelectorAll('a')).find(a => {
+          const t = (a.textContent || '').trim();
+          const h = a.getAttribute('href') || '';
+          return /万能食材/.test(t) || /\/cook_universal_/.test(h);
+        });
+        if (universalLink) {
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(universalLink);
+          Utils.log('食谱: 跳万能食材升级页');
+          return;
+        }
+      }
+
+      // 12.2.4 完成 → 返回列表
+      Utils.log('食谱: 无可执行动作，返回列表');
+      this.returnToList();
+    },
+
+    // 12.3 万能食材升级页
+    async processUniversal() {
+      // 找"确认升级"或"使用万能食材升级"按钮
+      const confirmBtn = Array.from(document.querySelectorAll('a')).find(a => {
+        const t = (a.textContent || '').trim();
         const oc = a.getAttribute('onclick') || '';
-        const hr = a.getAttribute('href') || '';
-        return t === '升级' && oc.includes('study(') && !hr.includes('universal');
+        return /万能食材.*升级|确认升级/.test(t) || /study\(/.test(oc);
       });
-      if (!upgradeBtn) {
-        Utils.log('食谱: 无升级按钮');
+      if (confirmBtn) {
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(confirmBtn);
+        Utils.log('食谱: 已点万能食材升级');
         return;
       }
+      Utils.log('食谱: 万能食材页无确认按钮');
+      this.returnToList();
+    },
 
-      // 检查条件：失败提示或红色未达成
-      const hasFail = Array.from(document.querySelectorAll('p')).some(p =>
-        p.textContent.includes('食谱学习失败') ||
-        p.textContent.includes('未达成')
-      );
-      if (hasFail) {
-        Utils.log('食谱: 升级条件未满足，跳过');
-        return;
-      }
+    // 找升级按钮（text='升级'，onclick 含 study(，href 不含 universal）
+    findUpgradeButton() {
+      return Array.from(document.querySelectorAll('a')).find(a => {
+        const t = (a.textContent || '').trim();
+        const oc = a.getAttribute('onclick') || '';
+        const h = a.getAttribute('href') || '';
+        return t === '升级' && /study\(/.test(oc) && !/universal/.test(h);
+      }) || null;
+    },
 
-      // 检查条件区域是否有红色文字
+    // 条件检查：旧 v4.0 完整保留 + 简化
+    checkConditions() {
+      // 1) 升级到XX条件：找条件标题
       const conditionTitle = Array.from(document.querySelectorAll('.s_room p')).find(p =>
         p.textContent.includes('升级到') && p.textContent.includes('条件：')
       );
-      if (conditionTitle) {
-        const conditionContainer = conditionTitle.closest('.s_room').nextElementSibling;
-        if (conditionContainer && conditionContainer.classList.contains('gen_background_blue')) {
-          const hasRed = conditionContainer.querySelector('.gen_red');
-          if (hasRed) {
-            Utils.log('食谱: 条件区域有红色提示，跳过');
-            return;
-          }
+      if (!conditionTitle) {
+        // 没找到条件区，可能是已满级或无升级
+        return false;
+      }
+      // 2) 条件区域：紧邻的 .gen_background_blue 容器
+      let conditionContainer = null;
+      const ownRoom = conditionTitle.closest('.s_room');
+      if (ownRoom) {
+        // 在同房间内向下找
+        let el = conditionTitle.nextElementSibling;
+        while (el && !el.classList.contains('gen_background_blue')) {
+          el = el.nextElementSibling;
+        }
+        if (el) conditionContainer = el;
+        if (!conditionContainer && ownRoom.nextElementSibling) {
+          conditionContainer = ownRoom.nextElementSibling.classList.contains('gen_background_blue')
+            ? ownRoom.nextElementSibling : null;
         }
       }
+      if (!conditionContainer) {
+        // 退化：直接在页面里找升级条件区域
+        conditionContainer = document.querySelector('.gen_background_blue');
+      }
+      if (!conditionContainer) return false;
 
-      await Utils.sleep(Utils.randMs(1, 2));
-      Utils.click(upgradeBtn);
-      Utils.log('食谱: 已点击升级');
+      // 3) 检查所有条件块
+      const blocks = conditionContainer.querySelectorAll('p');
+      for (const block of blocks) {
+        const text = block.textContent.trim();
+        // 跳过非关键条件（纯描述行）
+        if (!text) continue;
+        // 关键条件：含"×"（食材数量）、"拥有"、"街道"、或"金牌"
+        const isKey = /[×x]|拥有|街道|金牌|升级至/.test(text);
+        if (!isKey) continue;
+        const hasGreen = block.querySelector('.gen_green') !== null;
+        const hasRed = block.querySelector('.gen_red') !== null;
+        // 红色优先：任何 .gen_red 直接判失败
+        if (hasRed) {
+          Utils.log(`食谱: 条件未达 → ${text.slice(0, 40)}`);
+          return false;
+        }
+        // 没绿色也没红色（"未达成"等）也判失败
+        if (!hasGreen && /未达|不足|缺少/.test(text)) {
+          Utils.log(`食谱: 条件未达 → ${text.slice(0, 40)}`);
+          return false;
+        }
+      }
+      return true;
+    },
+
+    // 升级失败标记检测
+    checkUpgradeFailure() {
+      // .gen_background_yellow.s_room.s_font.gen_red 容器含"食谱学习失败"或"当前街道未全部升级至金牌"
+      const failContainers = document.querySelectorAll('.gen_background_yellow.s_room.s_font');
+      for (const c of failContainers) {
+        if (/食谱学习失败|当前街道未全部升级至金牌/.test(c.textContent)) {
+          return true;
+        }
+      }
+      return false;
+    },
+
+    // 返回食谱列表
+    returnToList() {
+      const back = Array.from(document.querySelectorAll('a')).find(a => {
+        const t = (a.textContent || '').trim();
+        const h = a.getAttribute('href') || '';
+        return t === '返回食谱' || t === '返回前页' || t === '返回' ||
+               /\/xz\/cookbook_/.test(h) || t === '<<' || t === 'Back';
+      });
+      if (back) {
+        Utils.sleep(Utils.randMs(1, 2)).then(() => Utils.click(back));
+        return;
+      }
+      Utils.warn('食谱: 找不到返回列表链接');
     },
   };
 
@@ -1735,11 +2096,14 @@
                                          { text: '开宝箱',              hrefMatch: '/xz/box' }] },
       { module: 'season',     navSteps: [{ text: '>>夏日签到活动<<',    hrefMatch: '/xz/activity_season' }] },
       { module: 'egg',        navSteps: [{ text: '>>小镇扭蛋活动<<',    hrefMatch: '/xz/activity_egg' }] },
+      { module: 'foodCoupon', navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' },
+                                         { text: '食材券',              hrefMatch: '/xz/warehouse_1_0' }] },
       { module: 'energy',     navSteps: [{ text: '吃饭活动',            hrefMatch: '/xz/activity_energy' }] },
       { module: 'restaurant', navSteps: [{ text: '我的餐厅',            hrefMatch: '/xz/restaurant' }] },
       { module: 'facility',   navSteps: [{ text: '设施',                hrefMatch: '/xz/restaurant_facility' }] },
       { module: 'bag',        navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' },
                                          { text: '礼包',                hrefMatch: '/xz/warehouse_2_0' }] },
+      { module: 'recipe',     navSteps: [{ text: '食谱',                hrefMatch: '/xz/cookbook_' }] },
       { module: 'guardian',   navSteps: [{ text: '神殿',                hrefMatch: '/xz/temple' },
                                          { text: '守护者',              hrefMatch: '/xz/guardian' }] },
     ],
