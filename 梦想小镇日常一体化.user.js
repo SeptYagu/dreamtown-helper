@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.4
+// @name         梦想小镇日常一体化 v3.5
 // @namespace    http://tampermonkey.net/
-// @version      3.4
+// @version      3.5
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,13 @@
 // ==/UserScript==
 
 /*
+ * v3.5 变更（2026-07-14）
+ * - 跨页任务统一改为“每页只执行第一个动作；关键动作消失才完成”
+ * - AutoPilot 独占计划模块，取消 Router 双执行与同页误 advance
+ * - 修复仓库食材券入口/ID、礼包循环、守护者连续攻击、多级真实导航
+ * - Scheduler 持久化全部计划时间，固定任务 jitter 每日只生成一次
+ * - 恢复旧脚本默认/阈值：特价只买 666、设施库存 5、食谱默认关闭、餐厅添油子开关
+ *
  * v3.4 变更（2026-07-13 27h+）
  * - 【食谱】彻底禁用万能食材升级：删除 processUniversal 方法、useUniversal 配置、面板开关
  *   findUpgradeButton 重命名为 findNormalUpgradeButton（语义清晰）
@@ -212,8 +219,13 @@
   const isEnabled = (id) => Utils.gget(`mod_${id}_enabled`, true);
 
   // 餐厅子开关
-  ['restaurant_cockroach', 'restaurant_dig'].forEach(k => {
-    if (Utils.gget(k, null) === null) Utils.gset(k, false);
+  const RESTAURANT_SUB_DEFAULTS = {
+    restaurant_cockroach: false,
+    restaurant_oil: true,
+    restaurant_dig: false,
+  };
+  Object.entries(RESTAURANT_SUB_DEFAULTS).forEach(([k, d]) => {
+    if (Utils.gget(k, null) === null) Utils.gset(k, d);
   });
 
   // ==================== 控制面板 ====================
@@ -245,10 +257,11 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.4</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.5</h3><div id="dxzxx-rows"></div>
         <details>
           <summary>餐厅子开关</summary>
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
+          <div class="row sub"><label>⛽ 自动添油</label><span class="toggle ${Utils.gget('restaurant_oil', true) ? 'on' : 'off'}" data-sub="restaurant_oil">${Utils.gget('restaurant_oil', true) ? '开' : '关'}</span></div>
           <div class="row sub"><label>📦 自动翻橱柜</label><span class="toggle ${Utils.gget('restaurant_dig', false) ? 'on' : 'off'}" data-sub="restaurant_dig">${Utils.gget('restaurant_dig', false) ? '开' : '关'}</span></div>
         </details>
         <details>
@@ -325,7 +338,7 @@
       // 食谱等级下拉
       const recipeLevel = panel.querySelector('#dxzxx-recipe-level');
       if (recipeLevel) {
-        const cur = Utils.gget('recipe_target_level', '金牌');
+        const cur = Utils.gget('recipe_target_level', 'off');
         recipeLevel.value = cur;
         recipeLevel.addEventListener('change', () => {
           Utils.gset('recipe_target_level', recipeLevel.value);
@@ -404,14 +417,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.4 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.5 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 自动跑全套日常';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.4`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.5`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -506,7 +519,7 @@
       if (text.includes('今日已签到') || text.includes('已签到成功')) {
         Utils.log('签到: 今日已完成');
         Utils.showStatus('签到', '今日已完成');
-        return;
+        return true;
       }
       const btn = Array.from(document.querySelectorAll('a[href="/xz/sign_in"]')).find(a =>
         a.textContent.trim() === '签到' && !a.closest('.disabled')
@@ -515,8 +528,10 @@
         await Utils.sleep(Utils.randMs(1, 2));
         Utils.click(btn);
         Utils.log('签到: 已点击签到');
+        return false;
       } else {
         Utils.warn('签到: 未找到按钮');
+        return true;
       }
     },
   };
@@ -527,27 +542,18 @@
     match: (p) => p === '/xz/wish',
     schedule: 'daily',
     async run() {
-      const MAX_FREE_WISHES = 4;  // 默认每日 4 次免费
-      let clicked = 0;
-
-      for (let i = 0; i < MAX_FREE_WISHES; i++) {
-        const freeBtn = document.querySelector('a[onclick="makeWish(0)"]');
-        if (!freeBtn) {
-          Utils.log('许愿: 按钮消失，停止');
-          break;
-        }
-        const statusSpan = freeBtn.nextElementSibling;
-        const isGreen = statusSpan && statusSpan.classList && statusSpan.classList.contains('gen_green');
-        if (!isGreen) {
-          Utils.log('许愿: 已用完（颜色变灰）');
-          break;
-        }
-        await Utils.sleep(Utils.randMs(1.5, 2.5));
-        Utils.click(freeBtn);
-        clicked++;
-        Utils.log(`许愿: 第 ${clicked} 次已点击`);
+      const freeBtn = document.querySelector('a[onclick="makeWish(0)"]');
+      const statusSpan = freeBtn?.nextElementSibling;
+      const isGreen = statusSpan?.classList?.contains('gen_green');
+      if (!freeBtn || !isGreen) {
+        Utils.log('许愿: 免费次数已用完');
+        Utils.showStatus('许愿', '今日已完成');
+        return true;
       }
-      Utils.showStatus('许愿', `已点击 ${clicked} 次`);
+      await Utils.sleep(Utils.randMs(1.5, 2.5));
+      Utils.click(freeBtn);
+      Utils.log('许愿: 点击本页第一个免费许愿，等待刷新后继续检测');
+      return false;
     },
   };
 
@@ -557,17 +563,19 @@
     schedule: 'meal',
     async run() {
       // 当前期餐次按钮: getActivityEnergy(N) 或文本"我吃"
-      const btns = Array.from(document.querySelectorAll('a')).filter(a => {
+      const btn = Array.from(document.querySelectorAll('a')).find(a => {
         const oc = a.getAttribute('onclick') || '';
         return oc.startsWith('getActivityEnergy') || a.textContent.trim() === '我吃';
       });
-      if (btns.length === 0) {
+      if (!btn) {
         Utils.log('体力: 当前期无可吃餐次');
         Utils.showStatus('体力', '无可吃');
-        return;
+        return true;
       }
-      await Utils.clickAll(btns, '体力');
-      Utils.showStatus('体力', `已点击 ${btns.length} 个`);
+      await Utils.sleep(Utils.randMs(1, 2));
+      Utils.click(btn);
+      Utils.log('体力: 点击当前餐次，等待刷新确认');
+      return false;
     },
   };
 
@@ -585,12 +593,28 @@
       { name: '海报',   setHref: '/xz/restaurant_facility_set_2_0', setupText: '长效手绘海报', propId: 14, buyPage: '/xz/prop_14' },
       { name: '老鼠夹', setHref: '/xz/restaurant_facility_set_4_0', setupText: '长效老鼠夹',   propId: 40, buyPage: '/xz/prop_40' },
     ],
-    MIN_COUNT: 10,  // 库存低于此值时自动补到 10+
+    MIN_COUNT: 5,  // 与旧脚本一致：库存低于 5 时补货
+    recordMinRemaining() {
+      let minMs = Number.MAX_SAFE_INTEGER;
+      document.querySelectorAll('p').forEach(p => {
+        const txt = p.textContent;
+        const combined = txt.match(/剩余\s*(\d+)\s*天\s*(\d+)\s*小时/);
+        const hourOnly = txt.match(/剩余\s*(\d+)\s*小时/);
+        const minOnly = txt.match(/剩余\s*(\d+)\s*分钟/);
+        const ms = combined ? (+combined[1] * 86400000 + +combined[2] * 3600000)
+          : hourOnly ? +hourOnly[1] * 3600000
+          : minOnly ? +minOnly[1] * 60000 : 0;
+        if (ms > 0 && ms < minMs) minMs = ms;
+      });
+      Utils.gset('facility_min_remaining_ms', minMs < Number.MAX_SAFE_INTEGER ? minMs : 0);
+      if (minMs < Number.MAX_SAFE_INTEGER) Utils.log(`设施: 最短剩余 ${Math.round(minMs / 3600000)}h`);
+    },
     async run() {
       const path = location.pathname;
 
       // 4.1 概览页：仅处理 3 个目标中"未设置"的项
       if (path === '/xz/restaurant_facility') {
+        this.recordMinRemaining();
         for (const t of this.TARGETS) {
           // 找包含 "t.name：未设置" 的 p 行 → 其内的"设置"链接
           const setLink = Array.from(document.querySelectorAll('a[href="' + t.setHref + '"]')).find(a => {
@@ -601,11 +625,11 @@
             await Utils.sleep(Utils.randMs(1, 2));
             Utils.click(setLink);
             Utils.log(`设施: ${t.name} 未设置，进入设置`);
-            return;
+            return false;
           }
         }
         Utils.log('设施: 3 项目标设施全部已设置');
-        return;
+        return true;
       }
 
       // 4.2 设置页：用 setupText 精确匹配长效道具
@@ -613,7 +637,7 @@
         const target = this.TARGETS.find(t => path === t.setHref);
         if (!target) {
           Utils.log(`设施: ${path} 非目标，跳过`);
-          return;
+          return true;
         }
         // 找包含 setupText 的 p 行
         const itemRow = Array.from(document.querySelectorAll('p')).find(p =>
@@ -637,10 +661,10 @@
               await Utils.sleep(Utils.randMs(1, 2));
               Utils.click(buyLink);
               Utils.log(`设施: 库存 ${have} < ${this.MIN_COUNT}，跳购买 ${target.buyPage}`);
-              return;
+              return false;
             }
             Utils.warn(`设施: 库存不足但未找到购买链接 ${target.buyPage}`);
-            return;
+            return true;
           }
 
           // 库存够 → 找"使用"按钮
@@ -649,13 +673,13 @@
             await Utils.sleep(Utils.randMs(1, 2));
             Utils.click(useBtn);
             Utils.log(`设施: 已使用 ${target.setupText} (库存 ${have})`);
-            return;
+            return false;
           }
           Utils.log(`设施: 库存 ${have} 充足但未找到使用按钮`);
-          return;
+          return true;
         }
         Utils.log(`设施: 未找到 ${target.setupText} 行`);
-        return;
+        return true;
       }
 
       // 4.3 购买页（prop_13/14/40）：买 10 个长效设施
@@ -665,7 +689,7 @@
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(buy10);
           Utils.log(`设施: 购买10个 ${path.split('_').pop()}`);
-          return;
+          return false;
         }
         // 备用：找其他购买链接
         const anyBuy = Array.from(document.querySelectorAll('a')).find(a =>
@@ -675,36 +699,12 @@
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(anyBuy);
           Utils.log('设施: 备用购买链接已点击');
+          return false;
         }
+        Utils.warn('设施: 购买页未找到购买按钮');
+        return true;
       }
-
-      // 4.4 概览页/设置页：扫描剩余时间，写入 GM（供 Scheduler.computeNext 计算下次）
-      if (path === '/xz/restaurant_facility' || path.startsWith('/xz/restaurant_facility_set_')) {
-        let minMs = Number.MAX_SAFE_INTEGER;
-        document.querySelectorAll('p').forEach(p => {
-          const txt = p.textContent;
-          // 匹配"剩余 2天 5小时"或"剩余 23小时"或"剩余 30分钟"
-          const combined = txt.match(/剩余\s*(\d+)\s*天\s*(\d+)\s*小时/);
-          const hourOnly = txt.match(/剩余\s*(\d+)\s*小时/);
-          const minOnly = txt.match(/剩余\s*(\d+)\s*分钟/);
-          let ms = 0;
-          if (combined) {
-            ms = +combined[1] * 86400000 + +combined[2] * 3600000;
-          } else if (hourOnly) {
-            ms = +hourOnly[1] * 3600000;
-          } else if (minOnly) {
-            ms = +minOnly[1] * 60000;
-          }
-          if (ms > 0 && ms < minMs) minMs = ms;
-        });
-        if (minMs < Number.MAX_SAFE_INTEGER) {
-          Utils.gset('facility_min_remaining_ms', minMs);
-          Utils.log(`设施: 最短剩余 ${Math.round(minMs / 3600000)}h`);
-        } else {
-          // 找不到 → 默认 1h 后重试（避免下次马上又跑）
-          Utils.gset('facility_min_remaining_ms', 0);
-        }
-      }
+      return true;
     },
   };
 
@@ -719,11 +719,12 @@
       if (!btn) {
         Utils.log('食神: 今日已拜访');
         Utils.showStatus('食神', '今日已完成');
-        return;
+        return true;
       }
       await Utils.sleep(Utils.randMs(1, 2));
       Utils.click(btn);
       Utils.log('食神: 已点击拜访');
+      return false;
     },
   };
 
@@ -751,6 +752,7 @@
       DAY_LEVEL1_MAX: 600,       // 每日菜场 1 级阈值
       DAY_LEVEL2_MAX: 2800,      // 每日菜场 2 级阈值
       BUY_CAP_PER_FIRE: 999,     // 单次 buyFood 输入框上限
+      DISCOUNT_PRICE: 666,       // 与旧脚本一致：特价仅买 666 金币
     },
 
     async run() {
@@ -771,12 +773,19 @@
         return;
       }
 
-      // 6.1 特价食材（整点 6-22 刷新）
-      const discountBtns = Array.from(document.querySelectorAll("a[onclick^='buyDiscountFood']"));
-      for (const btn of discountBtns) {
-        await Utils.sleep(Utils.randMs(1, 2));
-        Utils.click(btn);
-        Utils.log(`市场: 特价 ${btn.getAttribute('onclick')}`);
+      // 6.1 特价食材（整点 6-22 刷新）：恢复旧脚本的 666 严格过滤和同小时去重
+      const now = Utils.getServerTime();
+      const hourKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}-${now.getHours()}`;
+      if (Utils.gget('market_last_discount_hour', '') !== hourKey) {
+        const discountBtns = Array.from(document.querySelectorAll("a[onclick^='buyDiscountFood']")).filter(btn => {
+          const row = btn.closest('p') || btn.parentElement;
+          const price = +(row?.textContent.match(/(\d+)金币/)?.[1] || 0);
+          return price === this.CONFIG.DISCOUNT_PRICE;
+        });
+        if (discountBtns.length > 0) {
+          await Utils.clickAll(discountBtns, '市场-666特价');
+          Utils.gset('market_last_discount_hour', hourKey);
+        }
       }
 
       // 6.2 每日菜场（buyDayFood，6/12/18 刷新）：阈值过滤
@@ -886,7 +895,7 @@
     },
   };
 
-  // ----- 7. 食材券（综合旧脚本 + 新页面结构）-----
+  // ----- 7. 食材券（旧脚本白名单 + 当前 /xz/warehouse 结构）-----
   // 旧脚本自动处理 8 种食材券（propId 244/21-25/245/224）：
   //   1) 仓库页 (warehouse_1_0) 点 usePropUrl(1, propId) → 跳到 /xz/food_random_<level>
   //   2) 食材随机页点 random(level, 1000) → 兑换
@@ -897,11 +906,11 @@
   //   - 找不到任何 propUrl 时直接返回（无券可领），不再死循环
   //   - /xz/food_random_<level> 处理完成后自动点"返回仓库"
   MOD.foodCoupon = {
-    match: (p) => p === '/xz/warehouse_1_0' || /\/xz\/food_random_/.test(p),
+    match: (p) => p === '/xz/warehouse' || p === '/xz/warehouse_1_0' || /\/xz\/food_random_/.test(p),
     schedule: 'daily',
     CONFIG: {
-      // 旧脚本 8 种 + 新页面常见食材/调料券
-      PROP_IDS: [244, 21, 22, 23, 24, 25, 245, 224, 1, 2, 3, 4, 6, 7, 71, 80, 114, 115, 116, 117, 133, 142, 215, 220],
+      // 仅保留旧脚本确认过的 8 种；严禁把小喇叭/礼券/体力卡等加入候选
+      PROP_IDS: [244, 21, 22, 23, 24, 25, 245, 224],
     },
     async run() {
       const path = location.pathname;
@@ -926,15 +935,11 @@
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(exchangeBtn);
           Utils.log(`食材券: 兑换 level=${level}`);
-          // 兑换后稍等再决定回仓库
-          await Utils.sleep(Utils.randMs(2, 3));
-          this.returnToWarehouse();
-          return;
+          return false;
         }
         // 没有兑换按钮 → 直接返回
         Utils.log(`食材券: 兑换页无 random() 按钮，回仓库`);
-        this.returnToWarehouse();
-        return;
+        return this.returnToWarehouse() ? false : true;
       }
 
       // 7.2 仓库页（/xz/warehouse_1_0）：找"食材券"类 usePropUrl → 点击
@@ -944,9 +949,10 @@
         await Utils.sleep(Utils.randMs(1, 2));
         Utils.click(card);
         Utils.log(`食材券: 使用 ${oc}`);
-        return;
+        return false;
       }
       Utils.log('食材券: 仓库无可用券');
+      return true;
     },
 
     // 查找可用的食材券卡片
@@ -957,12 +963,7 @@
         return m && this.CONFIG.PROP_IDS.includes(+m[1]);
       });
       if (exact) return exact;
-      // 退化：找任何 usePropUrl(1, N) — 名字含"食材"/"调料"/"随机"
-      const fallback = Array.from(document.querySelectorAll('a[onclick^="usePropUrl(1,"]')).find(a => {
-        const row = a.closest('p') || a.parentElement;
-        return row && /食材|调料|随机/.test(row.textContent);
-      });
-      return fallback || null;
+      return null;
     },
 
     // 返回食材券仓库页
@@ -976,24 +977,43 @@
       });
       if (backLink) {
         Utils.sleep(Utils.randMs(1, 2)).then(() => Utils.click(backLink));
-        return;
+        return true;
       }
       Utils.warn('食材券: 找不到返回仓库链接');
+      return false;
     },
   };
 
   // ----- 8. 礼包开启 -----
   MOD.bag = {
-    match: (p) => p === '/xz/warehouse_2_0',
+    match: (p) => p === '/xz/warehouse_2_0' || /\/xz\/(?:prop|open)_bag_/.test(p),
     schedule: 'daily',
     async run() {
+      if (/\/xz\/(?:prop|open)_bag_/.test(location.pathname)) {
+        const back = Array.from(document.querySelectorAll('a')).find(a => {
+          const text = (a.textContent || '').trim();
+          const href = a.getAttribute('href') || '';
+          return href === '/xz/warehouse_2_0' || text === '返回礼包' || text === '返回仓库' || text === '返回前页';
+        });
+        if (!back) {
+          Utils.warn('礼包: 结果页找不到返回礼包仓库链接');
+          return true;
+        }
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(back);
+        Utils.log('礼包: 返回礼包仓库继续检测');
+        return false;
+      }
       const links = Array.from(document.querySelectorAll('a[onclick^="usePropUrl(2,"]'));
       if (links.length === 0) {
         Utils.log('礼包: 无可用');
-        return;
+        Utils.showStatus('礼包', '已全部开启');
+        return true;
       }
-      await Utils.clickAll(links, '礼包');
-      Utils.showStatus('礼包', `已点击 ${links.length} 个`);
+      await Utils.sleep(Utils.randMs(1, 2));
+      Utils.click(links[0]);
+      Utils.log(`礼包: 只开启本页第一个（当前共 ${links.length} 个），等待结果页返回后继续`);
+      return false;
     },
   };
 
@@ -1006,25 +1026,25 @@
 
     // 9.1 概览页：添油 + 扫感染楼层 → 导航去第一层
     async processOverview() {
-      await this.addOil();
+      if (await this.addOil()) return false;
 
       if (!Utils.gget('restaurant_cockroach', false)) {
         Utils.log('餐厅: 蟑螂开关关，跳过楼层扫描');
         Utils.gset('restaurant_remaining_floors', []);
-        return;
+        return true;
       }
 
       const infected = this.detectInfectedFloors();
       if (infected.length === 0) {
         Utils.log('餐厅: 无感染楼层');
         Utils.gset('restaurant_remaining_floors', []);
-        return;
+        return true;
       }
 
       const [first, ...rest] = infected;
       Utils.gset('restaurant_remaining_floors', rest);
       Utils.log(`餐厅: ${infected.length} 层感染 (${infected.join(',')})，先去 ${first} 楼`);
-      await this.navigateToFloor(first);
+      return (await this.navigateToFloor(first)) ? false : true;
     },
 
     // 9.2 楼层页：打蟑 + 翻柜 + 跳下一感染楼层（或回概览）
@@ -1032,7 +1052,10 @@
       if (Utils.gget('restaurant_cockroach', false)) {
         const roachBtns = Array.from(document.querySelectorAll("a[onclick^='killCockroach']"));
         if (roachBtns.length > 0) {
-          await Utils.clickAll(roachBtns, '餐厅-打蟑');
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(roachBtns[0]);
+          Utils.log(`餐厅: 清除本页第一个蟑螂（共 ${roachBtns.length} 个），刷新后继续`);
+          return false;
         } else {
           Utils.log('餐厅: 当前楼层无蟑螂');
         }
@@ -1044,6 +1067,7 @@
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(pick);
           Utils.log('餐厅: 已翻柜');
+          return false;
         }
       }
 
@@ -1052,29 +1076,35 @@
         const [next, ...rest] = remaining;
         Utils.gset('restaurant_remaining_floors', rest);
         Utils.log(`餐厅: 剩余 ${rest.length + 1} 层，去 ${next} 楼`);
-        await this.navigateToFloor(next);
+        return (await this.navigateToFloor(next)) ? false : true;
       } else {
         Utils.log('餐厅: 全部处理完，回概览');
-        await this.navigateToOverview();
+        return (await this.navigateToOverview()) ? false : true;
       }
     },
 
     // 添油
     async addOil() {
+      if (!Utils.gget('restaurant_oil', true)) {
+        Utils.log('餐厅: 添油开关关');
+        return false;
+      }
       const oilText = Utils.findByTextIncludes('p', '油壶：')?.textContent || '';
       const m = oilText.match(/(\d+)\s*\/\s*(\d+)/);
-      if (!m) return;
+      if (!m) return false;
       const cur = +m[1], max = +m[2];
-      if (cur < max * 0.7) {
+      if (cur < 11000) {
         const addOil = document.querySelector("a[onclick^='addFullOil']");
         if (addOil) {
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(addOil);
           Utils.log(`餐厅: 添油 ${cur} → ${max}`);
+          return true;
         }
       } else {
         Utils.log(`餐厅: 油量充足 ${cur}/${max}`);
       }
+      return false;
     },
 
     // 检测感染楼层：找 cockroach 图标邻近的 restaurant 链接
@@ -1128,9 +1158,11 @@
       if (link) {
         await Utils.sleep(Utils.randMs(1, 2));
         Utils.click(link);
+        return true;
       } else {
         Utils.warn(`餐厅: 找不到 ${floor} 楼链接，清空剩余楼层`);
         Utils.gset('restaurant_remaining_floors', []);
+        return false;
       }
     },
 
@@ -1147,20 +1179,21 @@
       if (link) {
         await Utils.sleep(Utils.randMs(1, 2));
         Utils.click(link);
-        return;
+        return true;
       }
       Utils.warn('餐厅: 找不到概览链接');
+      return false;
     },
 
     async run() {
       const path = location.pathname;
       if (path === '/xz/restaurant') {
-        await this.processOverview();
-        return;
+        return this.processOverview();
       }
       if (/\/xz\/restaurant_\d+_\d+/.test(path)) {
-        await this.processFloor();
+        return this.processFloor();
       }
+      return true;
     },
   };
 
@@ -1179,10 +1212,10 @@
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(boxLink);
           Utils.log('宝箱: 从酒吧跳转到开宝箱');
-          return;
+          return false;
         }
         Utils.log('宝箱: 酒吧页无开宝箱链接，跳过');
-        return;
+        return true;
       }
 
       // 神话级宝箱优先（200 进度满）
@@ -1200,7 +1233,7 @@
             await Utils.sleep(Utils.randMs(1, 2));
             Utils.click(mythBtn);
             Utils.log('宝箱: 已开启神话级');
-            return;
+            return false;
           }
         }
       }
@@ -1218,11 +1251,12 @@
             await Utils.sleep(Utils.randMs(1, 2));
             Utils.click(freeBtn);
             Utils.log('宝箱: 已开启免费');
-            return;
+            return false;
           }
         }
       }
       Utils.log('宝箱: 今日已开完或条件未满');
+      return true;
     },
   };
 
@@ -1238,7 +1272,7 @@
   //   recipe_target_level: 目标等级（'off'/'特色'/'上品'/'极品'/'金牌'/'金牌1-10级'）
   //   recipe_learn: 是否自动学习（默认 true）
   MOD.recipe = {
-    match: (p) => /\/xz\/cook_(\d+)?/.test(p) || /\/xz\/cookbook_/.test(p),
+    match: (p) => /^\/xz\/cook_\d+/.test(p) || /\/xz\/cookbook_/.test(p) || /\/xz\/cook_universal_/.test(p),
     schedule: 'recipe',
 
     // 等级映射：旧脚本 v4.0 完整保留
@@ -1251,7 +1285,7 @@
     // 读取配置
     getConfig() {
       return {
-        targetLevel: Utils.gget('recipe_target_level', '金牌'),
+        targetLevel: Utils.gget('recipe_target_level', 'off'),
         learn: Utils.gget('recipe_learn', true),
       };
     },
@@ -1261,25 +1295,27 @@
       const path = location.pathname;
       // 详情页：学习 / 升级
       if (/^\/xz\/cook_\d+/.test(path)) {
-        await this.processDetail();
-        return;
+        return this.processDetail();
       }
       // 列表页：找可升级项
       if (/cookbook_/.test(path)) {
-        await this.processCookbook();
-        return;
+        return this.processCookbook();
       }
       // 万能食材升级页（/xz/cook_universal_*）：禁用！不进入，不操作
       if (/\/xz\/cook_universal_/.test(path)) {
         Utils.log('食谱: 万能食材升级已禁用，跳过该页');
-        this.returnToList();
-        return;
+        return this.returnToList() ? false : true;
       }
+      return true;
     },
 
     // 12.1 列表页（cookbook_*）
     async processCookbook() {
       const cfg = this.getConfig();
+      if (cfg.targetLevel === 'off') {
+        Utils.log('食谱: 目标等级为关闭，不自动扫描/学习');
+        return true;
+      }
       const targetValue = this.LEVEL_MAP[cfg.targetLevel] ?? 4;
 
       // 12.1.1 找"可升级"项：旧选择器（.gen_background_blue.s_room.s_font → p 含 .gen_grey + .gen_red 含"可升级"）
@@ -1288,29 +1324,21 @@
         await Utils.sleep(Utils.randMs(1, 2));
         Utils.click(upgradeItem.link);
         Utils.log(`食谱: 进入 ${upgradeItem.name} (${upgradeItem.level} → ${cfg.targetLevel})`);
-        return;
+        return false;
       }
 
-      // 12.1.2 找未学习项（如果学习开关开）
-      if (cfg.learn) {
-        const learnItem = this.findLearnItem();
-        if (learnItem) {
-          await Utils.sleep(Utils.randMs(1, 2));
-          Utils.click(learnItem.link);
-          Utils.log(`食谱: 学习 ${learnItem.name}`);
-          return;
-        }
-      }
-
-      // 12.1.3 当前页处理完 → 翻页
+      // 当前页处理完 → 翻页（不从列表猜测“未学习项”）
       const nextPage = this.findNextPage();
       if (nextPage) {
         Utils.log('食谱: 翻到下一页');
         await Utils.sleep(Utils.randMs(1, 2));
         Utils.click(nextPage);
-        return;
+        return false;
       }
       Utils.log('食谱: 当前列表已扫完');
+      Utils.gset('recipe_target_level', 'off');
+      Utils.showStatus('食谱', '扫描完成，目标等级已关闭');
+      return true;
     },
 
     // 找可升级项
@@ -1364,8 +1392,7 @@
       // 12.2.0 先检测升级失败标记
       if (this.checkUpgradeFailure()) {
         Utils.log('食谱: 检测到升级失败标记，跳过详情');
-        this.returnToList();
-        return;
+        return this.returnToList() ? false : true;
       }
 
       // 12.2.1 学习：未学习时显示"学习"按钮
@@ -1375,7 +1402,7 @@
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(learnBtn);
           Utils.log('食谱: 已点学习');
-          return;
+          return false;
         }
       }
 
@@ -1385,12 +1412,12 @@
         await Utils.sleep(Utils.randMs(1, 2));
         Utils.click(upgradeBtn);
         Utils.log('食谱: 已点升级（普通食材）');
-        return;
+        return false;
       }
 
       // 12.2.3 无可执行动作 → 返回列表（不点万能食材）
       Utils.log('食谱: 条件不满足或已达目标，返回列表');
-      this.returnToList();
+      return this.returnToList() ? false : true;
     },
 
     // 找普通升级按钮（text='升级'，onclick 含 study(，href 不含 universal）
@@ -1473,9 +1500,10 @@
       });
       if (back) {
         Utils.sleep(Utils.randMs(1, 2)).then(() => Utils.click(back));
-        return;
+        return true;
       }
       Utils.warn('食谱: 找不到返回列表链接');
+      return false;
     },
   };
 
@@ -1498,12 +1526,13 @@
         if (!launchBtn) {
           Utils.log('守护者: 已被击败或按钮未找到');
           Utils.showStatus('守护者', '已完成');
-          return;
+          return true;
         }
         if (have > 0) {
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(launchBtn);
           Utils.log(`守护者: 发射爆裂 (库存 ${have})`);
+          return false;
         } else {
           // 库存不足去商店
           const shopLink = Array.from(document.querySelectorAll('a')).find(a =>
@@ -1513,16 +1542,38 @@
             await Utils.sleep(Utils.randMs(1, 2));
             Utils.click(shopLink);
             Utils.log('守护者: 库存不足去商店');
+            return false;
           }
+          Utils.warn('守护者: 库存不足且找不到爆裂飞弹商店入口');
+          return true;
         }
       } else {
-        // /xz/prop_82 商店页：买 10 个爆裂
-        const buy10 = Utils.findByText('a', '购买10个');
-        if (buy10) {
-          await Utils.sleep(Utils.randMs(1, 2));
-          Utils.click(buy10);
-          Utils.log('守护者: 已点击购买10个爆裂');
+        // /xz/prop_82 商店页：与旧脚本一致，库存不足时补到约 300 个
+        const text = document.body.textContent;
+        const have = +(text.match(/(?:拥有|库存)\s*(\d+)\s*个/)?.[1] || 0);
+        if (have >= 300) {
+          const back = document.querySelector('a[onclick="backPage()"]') || Utils.findByText('a', '返回前页');
+          if (back) {
+            await Utils.sleep(Utils.randMs(1, 2));
+            Utils.click(back);
+            Utils.log(`守护者: 飞弹库存 ${have}，返回继续攻击`);
+            return false;
+          }
+          return true;
         }
+        const input = document.getElementById('buy_num');
+        const buy = document.querySelector('a[onclick="buyByActivity(0,82,0)"]');
+        if (input && buy) {
+          input.value = '300';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(buy);
+          Utils.log('守护者: 已提交购买 300 个爆裂飞弹');
+          return false;
+        }
+        Utils.warn('守护者: 商店页未找到数量框或购买按钮');
+        return true;
       }
     },
   };
@@ -1544,10 +1595,12 @@
       });
       if (usable.length === 0) {
         Utils.log('季节签到: 无可领取');
-        return;
+        return true;
       }
-      await Utils.clickAll(usable, '季节签到');
-      Utils.showStatus('季节签到', `已领取 ${usable.length} 项`);
+      await Utils.sleep(Utils.randMs(1, 2));
+      Utils.click(usable[0]);
+      Utils.log(`季节签到: 领取本页第一项（共 ${usable.length} 项），刷新后继续`);
+      return false;
     },
   };
 
@@ -1561,7 +1614,10 @@
       const ticketBtns = Array.from(document.querySelectorAll("a[onclick^='getEggTicket']"));
       // 排除已领取（已领取的任务行不会显示领取链接），未达成的也不会显示
       if (ticketBtns.length > 0) {
-        await Utils.clickAll(ticketBtns, '扭蛋-领奖');
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(ticketBtns[0]);
+        Utils.log(`扭蛋: 领取本页第一张任务券（共 ${ticketBtns.length} 张）`);
+        return false;
       }
 
       // 14.2 实际扭蛋: getEgg() 文本"扭蛋"
@@ -1575,8 +1631,10 @@
         await Utils.sleep(Utils.randMs(1, 2));
         Utils.click(spinBtn);
         Utils.log(`扭蛋: 已扭 (${tickets} 张券)`);
+        return false;
       } else {
         Utils.log(`扭蛋: 券不足或无按钮 (${tickets} 张)`);
+        return true;
       }
     },
   };
@@ -1602,14 +1660,14 @@
     { id: 'signIn',  module: 'signIn',  target: '/xz/sign_in',         nav: '签到',             slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 5000 },
     { id: 'wish',    module: 'wish',    target: '/xz/wish',            nav: '许愿',             slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 15000 },
     { id: 'god',     module: 'god',     target: '/xz/god',             nav: '食神',             slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 5000 },
-    { id: 'box',     module: 'box',     target: '/xz/box',             nav: '酒吧',             slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 8000 },
+    { id: 'box',     module: 'box',     target: '/xz/box',             nav: '酒吧', route: [{ text: '酒吧', href: '/xz/bar' }, { text: '开宝箱', href: '/xz/box' }], slot: '7:30', jitterMin: 0, jitterMax: 15, runOnce: true, runMs: 8000 },
     { id: 'season',  module: 'season',  target: '/xz/activity_season', nav: '>>夏日签到活动<<', slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 5000 },
     { id: 'egg',     module: 'egg',     target: '/xz/activity_egg',    nav: '>>小镇扭蛋活动<<', slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 8000 },
-    { id: 'bag',     module: 'bag',     target: '/xz/warehouse_2_0',   nav: '仓库',             slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 8000 },
+    { id: 'bag',     module: 'bag',     target: '/xz/warehouse_2_0',   nav: '仓库', route: [{ text: '仓库', href: '/xz/warehouse' }, { text: '礼包', href: '/xz/warehouse_2_0' }], slot: '7:30', jitterMin: 0, jitterMax: 15, runOnce: true, runMs: 8000 },
 
     // 24h 独立硬定时（从上次跑完算起 24h ± 60min jitter）
-    { id: 'guardian', module: 'guardian', target: '/xz/guardian',       nav: '神殿',             slot: '24h',  jitterMin: 0,   jitterMax: 60, runOnce: true, runMs: 10000 },
-    { id: 'recipe',   module: 'recipe',   target: '/xz/cookbook_6_3_1', nav: '食谱',             slot: '24h',  jitterMin: 0,   jitterMax: 60, runOnce: true, runMs: 30000 },
+    { id: 'guardian', module: 'guardian', target: '/xz/guardian', nav: '神殿', route: [{ text: '神殿', href: '/xz/temple' }, { text: '挑战守护者', href: '/xz/guardian' }], slot: '24h', jitterMin: 0, jitterMax: 60, runOnce: true, runMs: 10000 },
+    { id: 'recipe', module: 'recipe', target: '/xz/cookbook_8_3_1', nav: '食谱', route: [{ text: '食谱', href: '/xz/cookbook' }, { text: '可升级', href: '/xz/cookbook_8_3_1' }], slot: '24h', jitterMin: 0, jitterMax: 60, runOnce: true, runMs: 30000 },
   ];
 
   // 任务频次参考表（已迁移到 DYNAMIC_SCHEDULE，此处仅注释保留）
@@ -1674,7 +1732,7 @@
 
     // 市场：6-23 整点 + 30-300s jitter（秒级抖动防踩踏）
     {
-      id: 'market', module: 'market', target: '/xz/market', nav: '市场', runMs: 12000,
+      id: 'market', module: 'market', target: '/xz/market', nav: '菜场', runMs: 12000,
       computeNext() {
         const now = Utils.getServerTime();
         const nowMs = now.getTime();
@@ -1713,7 +1771,7 @@
         // 剩余时间未知 → 1h 后首次执行
         if (!remainingMs) return nowMs + offsetMs;
         // 过期 + 偏移 → 触发时间 = now + 剩余 + 1h
-        const trigger = nowMs + remainingMs + offsetMs;
+        const trigger = nowMs + Math.min(remainingMs + offsetMs, 24 * 3600000);
         return trigger > nowMs ? trigger : nowMs + 60000;
       },
     },
@@ -1760,13 +1818,34 @@
     // 每页加载都调一次
     async onPageLoad(currentPath) {
       if (!this.isOn()) return;
-      const phase = Utils.gget(PHASE_KEY, null);
+      let phase = Utils.gget(PHASE_KEY, null);
 
       // ---- 无 phase：仅主页初始化 ----
       if (!phase) {
         if (currentPath === '/xz/') {
           this.computeAll();
           this.scheduleNext();
+        }
+        return;
+      }
+
+      // ---- phase=navigating：按真实链接每页只走下一跳 ----
+      if (phase.state === 'navigating') {
+        if (phase.module && MOD[phase.module]?.match?.(currentPath)) {
+          phase.state = 'running';
+          Utils.gset(PHASE_KEY, phase);
+          return this.onPageLoad(currentPath);
+        }
+        if (await this.navigatePhase(phase, currentPath)) return;
+        Utils.warn(`调度器: ${phase.id} 无法从 ${currentPath} 继续导航，5min 后重试`);
+        const retryAt = Utils.getServerTime().getTime() + 300000;
+        Utils.gset(`sched_${phase.id}_nextAt`, retryAt);
+        Utils.gset(PHASE_KEY, null);
+        if (currentPath === '/xz/') {
+          this.computeAll();
+          this.scheduleNext();
+        } else {
+          await this.navigateHome();
         }
         return;
       }
@@ -1793,11 +1872,16 @@
 
         // 模块可能已在 Router.run() 里跑完 → 立刻检测
         const doneAt = Utils.gget(`mod_${phase.module}_done`, 0);
-        if (doneAt <= phase.beforeAt) {
+        let finished = doneAt > phase.beforeAt;
+        if (!finished) {
           // 还没完成 → 等
-          await this.waitForDone(phase.module, phase.beforeAt, phase.runMs);
+          finished = await this.waitForDone(phase.module, phase.beforeAt, phase.runMs);
         } else {
           Utils.log(`调度器: 模块 ${phase.module} 已在 Router 中完成`);
+        }
+        if (!finished) {
+          Utils.log(`调度器: ${phase.module} 仍有关键动作，保持 running 等待刷新续跑`);
+          return;
         }
 
         // 写回主页状态
@@ -1819,18 +1903,44 @@
       }
     },
 
+    async navigatePhase(phase, currentPath) {
+      const entry = ALL_ENTRIES().find(e => e.id === phase.id);
+      if (!entry) return false;
+      const route = entry.route || [{ text: entry.nav, href: entry.target }];
+      let nextIndex = 0;
+      if (currentPath !== '/xz/') {
+        const currentIndex = route.findIndex(step => step.href === currentPath);
+        if (currentIndex < 0 || currentIndex >= route.length - 1) return false;
+        nextIndex = currentIndex + 1;
+      }
+      const next = route[nextIndex];
+      const link = Array.from(document.querySelectorAll('a')).find(a => {
+        const text = (a.textContent || '').trim();
+        const href = a.getAttribute('href') || '';
+        return href === next.href && (!next.text || text.includes(next.text));
+      });
+      if (!link) return false;
+      await Utils.sleep(Utils.randMs(1, 2));
+      Utils.click(link);
+      Utils.log(`调度器导航: ${currentPath} → ${next.href}`);
+      return true;
+    },
+
     // 算所有 entry 的 nextRunAt
     computeAll() {
       const now = Utils.getServerTime();
       const nowMs = now.getTime();
 
       DAILY_SCHEDULE.forEach(e => {
-        e.nextRunAt = this.computeFixedNext(e, nowMs);
+        const saved = Utils.gget(`sched_${e.id}_nextAt`, 0);
+        e.nextRunAt = saved > nowMs ? saved : this.computeFixedNext(e, nowMs);
+        Utils.gset(`sched_${e.id}_nextAt`, e.nextRunAt);
       });
 
       DYNAMIC_SCHEDULE.forEach(e => {
         const saved = Utils.gget(`sched_${e.id}_nextAt`, 0);
         e.nextRunAt = saved > nowMs ? saved : e.computeNext();
+        Utils.gset(`sched_${e.id}_nextAt`, e.nextRunAt);
       });
     },
 
@@ -1921,34 +2031,14 @@
     },
 
     // 触发：在主页点 nav 链接跳到目标页
-    fireToTarget(entry) {
+    async fireToTarget(entry) {
       Utils.log(`调度器: 触发 ${entry.id} → ${entry.target}`);
 
       if (location.pathname !== '/xz/') {
         Utils.warn(`调度器: 触发时不在主页 (${location.pathname})，跳过`);
         // 推后 1min 让用户导航回来
         entry.nextRunAt = Utils.getServerTime().getTime() + 60000;
-        if (DAILY_SCHEDULE.includes(entry)) {
-          // 不持久化（固定表每次 computeAll 重算）
-        } else {
-          Utils.gset(`sched_${entry.id}_nextAt`, entry.nextRunAt);
-        }
-        this.scheduleNext();
-        return;
-      }
-
-      const link = Array.from(document.querySelectorAll('a')).find(a => {
-        const t = a.textContent.trim();
-        const h = a.getAttribute('href') || '';
-        return t.includes(entry.nav) && h.includes(entry.target);
-      });
-
-      if (!link) {
-        Utils.warn(`调度器: 找不到链接 "${entry.nav}" → ${entry.target}，5min 后重试`);
-        entry.nextRunAt = Utils.getServerTime().getTime() + 300000;
-        if (!DAILY_SCHEDULE.includes(entry)) {
-          Utils.gset(`sched_${entry.id}_nextAt`, entry.nextRunAt);
-        }
+        Utils.gset(`sched_${entry.id}_nextAt`, entry.nextRunAt);
         this.scheduleNext();
         return;
       }
@@ -1957,7 +2047,7 @@
       const beforeAt = Utils.gget(`mod_${entry.module}_done`, 0);
 
       Utils.gset(PHASE_KEY, {
-        state: 'running',
+        state: 'navigating',
         id: entry.id,
         module: entry.module,
         target: entry.target,
@@ -1967,8 +2057,15 @@
         beforeAt,
       });
 
-      Utils.click(link);
-      // 当前页死 — 目标页加载时 onPageLoad() 接管
+      const phase = Utils.gget(PHASE_KEY, null);
+      if (!await this.navigatePhase(phase, location.pathname)) {
+        Utils.warn(`调度器: 找不到 ${entry.id} 的首跳真实链接，5min 后重试`);
+        const retryAt = Utils.getServerTime().getTime() + 300000;
+        entry.nextRunAt = retryAt;
+        Utils.gset(`sched_${entry.id}_nextAt`, retryAt);
+        Utils.gset(PHASE_KEY, null);
+        this.scheduleNext();
+      }
     },
 
     // 等模块完成（mod_<id>_done > beforeAt）
@@ -2024,18 +2121,12 @@
 
       const entry = ALL_ENTRIES().find(e => e.id === phase.id);
       if (entry) {
-        if (DAILY_SCHEDULE.includes(entry)) {
-          // 固定表：明天同时间（computeAll 会重算，这里只更新缓存）
-          entry.nextRunAt = entry.nextRunAt + 86400000;
-        } else {
-          // 动态表：computeNext()
-          const newNext = entry.computeNext();
-          entry.nextRunAt = newNext;
-          Utils.gset(`sched_${entry.id}_nextAt`, newNext);
-        }
+        // 清本次计划；computeAll 会依据 lastRun 生成并持久化下一次
+        Utils.gset(`sched_${entry.id}_nextAt`, 0);
       }
 
       if (this.isOn()) {
+        this.computeAll();
         this.scheduleNext();
       } else {
         Utils.log('调度器已停止，不再 schedule');
@@ -2055,14 +2146,14 @@
                                          { text: '开宝箱',              hrefMatch: '/xz/box' }] },
       { module: 'season',     navSteps: [{ text: '>>夏日签到活动<<',    hrefMatch: '/xz/activity_season' }] },
       { module: 'egg',        navSteps: [{ text: '>>小镇扭蛋活动<<',    hrefMatch: '/xz/activity_egg' }] },
-      { module: 'foodCoupon', navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' },
-                                         { text: '食材券',              hrefMatch: '/xz/warehouse_1_0' }] },
+      { module: 'foodCoupon', navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' }] },
       { module: 'energy',     navSteps: [{ text: '吃饭活动',            hrefMatch: '/xz/activity_energy' }] },
-      { module: 'restaurant', navSteps: [{ text: '我的餐厅',            hrefMatch: '/xz/restaurant' }] },
+      { module: 'restaurant', navSteps: [{ text: '餐厅',                hrefMatch: '/xz/restaurant' }] },
       { module: 'facility',   navSteps: [{ text: '设施',                hrefMatch: '/xz/restaurant_facility' }] },
       { module: 'bag',        navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' },
                                          { text: '礼包',                hrefMatch: '/xz/warehouse_2_0' }] },
-      { module: 'recipe',     navSteps: [{ text: '食谱',                hrefMatch: '/xz/cookbook_' }] },
+      { module: 'recipe',     navSteps: [{ text: '食谱',                hrefMatch: '/xz/cookbook' },
+                                         { text: '可升级',              hrefMatch: '/xz/cookbook_8_3_1' }] },
       { module: 'guardian',   navSteps: [{ text: '神殿',                hrefMatch: '/xz/temple' },
                                          { text: '守护者',              hrefMatch: '/xz/guardian' }] },
     ],
@@ -2075,8 +2166,7 @@
       if (typeof Scheduler !== 'undefined' && Scheduler.isOn()) {
         Scheduler.stop('AutoPilot 启动');
       }
-      // 重置会话级 lastPage 记录（用于去重）
-      Utils.gset('autopilot_session', { id: Date.now(), lastPage: '', lastPageAt: 0, iter: 0 });
+      Utils.gset('autopilot_session', { id: Date.now(), iter: 0 });
       Utils.gset(this.stateKey, { enabled: true, stepIndex: 0, startedAt: Date.now() });
       Utils.log('▶▶ 自动计划启动');
       Utils.showStatus('自动驾驶', '启动中…', '#FF9800');
@@ -2102,13 +2192,11 @@
         return;
       }
 
-      // 会话级去重：同页 5s 内重复到达则跳过
-      const session = Utils.gget('autopilot_session', null) || { lastPage: '', lastPageAt: 0, iter: 0 };
+      const session = Utils.gget('autopilot_session', null) || { iter: 0 };
       const path = location.pathname;
-      const now = Date.now();
       session.iter = (session.iter || 0) + 1;
-      // 安全网：单次会话 iter > 80 强制停止（防止真死循环）
-      if (session.iter > 80) {
+      // 守护者可能需要上百次单发，保留高上限防真死循环
+      if (session.iter > 500) {
         Utils.warn(`自动驾驶: 单次会话迭代 ${session.iter} 次超限，强制停止`);
         this.stop('迭代超限保护');
         return;
@@ -2127,78 +2215,66 @@
         return;
       }
 
-      const targetPath = step.navSteps[step.navSteps.length - 1].hrefMatch;
-      Utils.log(`自动驾驶: iter=${session.iter} step=${stepIdx + 1}/${this.PLAN.length} (${step.module}) path=${path} target=${targetPath}`);
+      Utils.log(`自动驾驶: iter=${session.iter} step=${stepIdx + 1}/${this.PLAN.length} (${step.module}) path=${path}`);
 
-      // 同页快速去重：5s 内已处理过同 path → advance 跳过
-      if (session.lastPage === path && (now - (session.lastPageAt || 0)) < 5000) {
-        Utils.log(`自动驾驶: ${path} 5s 内重复，跳过 advance`);
+      if (!isEnabled(step.module)) {
+        Utils.log(`计划[${stepIdx + 1}/${this.PLAN.length}] ${step.module}: 已关闭，跳过`);
         this.advance();
         return;
       }
-      session.lastPage = path;
-      session.lastPageAt = now;
-      Utils.gset('autopilot_session', session);
 
-      if (path === targetPath) {
-        // 到达目标 → 运行模块
-        if (!isEnabled(step.module)) {
-          Utils.log(`计划[${stepIdx + 1}/${this.PLAN.length}] ${step.module}: 已关闭，跳过`);
-          this.advance();
-          return;
-        }
+      // 模块自己声明负责当前页：只由 AutoPilot 执行一次，Router 不再抢跑
+      if (MOD[step.module]?.match?.(path)) {
         Utils.log(`计划[${stepIdx + 1}/${this.PLAN.length}] ▶ ${step.module} 开始`);
         Utils.showStatus('自动驾驶', `${stepIdx + 1}/${this.PLAN.length} ${step.module}`, '#FF9800');
+        let completed = false;
         try {
-          await MOD[step.module].run();
+          completed = await MOD[step.module].run();
         } catch (e) {
           Utils.warn(`${step.module} 异常: ${e.message}`);
+          this.stop(`${step.module} 异常`);
+          return;
         }
-        await Utils.sleep(Utils.randMs(2, 3));
-        // 模块可能跳到子页（如 restaurant_facility → set_X_0）
-        const newPath = location.pathname;
-        const isSubPage = this.PLAN[stepIdx].navSteps.some(ns => ns.hrefMatch === newPath);
-        if (!isSubPage && newPath !== targetPath) {
-          // 模块改了路径但不是子页 → 直接 advance（让 advance 来回主页）
-          Utils.log(`计划: 模块跳到 ${newPath}，回主页后下一项`);
+        if (completed === true) {
+          Utils.gset(`mod_${step.module}_done`, Date.now());
+          Utils.log(`计划[${stepIdx + 1}/${this.PLAN.length}] ✓ ${step.module} 关键动作已消失`);
+          this.advance();
+        } else {
+          // 点击若是同页更新而非整页跳转，稍后在同一步重新检测；绝不 advance
+          setTimeout(() => this.continue(), 3000);
         }
-        this.advance();
-      } else if (path === '/xz/') {
-        // 在主页，导航到本步骤
-        await this.gotoStep(step);
-      } else {
-        // 在其他页面（如上一步子页遗留）→ 先回主页
-        Utils.log(`计划: 当前 ${path}（非目标非主页），先回主页`);
+        return;
+      }
+
+      // 主页或合法中转页：每次页面只点下一跳，完整页面加载后再续跑
+      const routed = await this.gotoStep(step);
+      if (!routed) {
+        Utils.log(`计划: 当前 ${path} 不是 ${step.module} 的合法路径，回主页重试`);
         await this.navigateToHome();
       }
     },
 
     async gotoStep(step) {
-      let curPath = location.pathname;
-      for (const nav of step.navSteps) {
-        if (curPath === nav.hrefMatch) break;
-        // 在当前页找 nav.text + hrefMatch 的链接
-        const link = Array.from(document.querySelectorAll('a')).find(a => {
-          const t = a.textContent.trim();
-          const h = a.getAttribute('href') || '';
-          return t.includes(nav.text) && h.includes(nav.hrefMatch);
-        });
-        if (!link) {
-          Utils.warn(`导航: 找不到 "${nav.text}" → ${nav.hrefMatch}`);
-          // 尝试回主页
-          await this.navigateToHome();
-          return false;
-        }
-        await Utils.sleep(Utils.randMs(1, 2));
-        Utils.click(link);
-        const newPath = await this.waitForPathChange(curPath, 8000);
-        if (!newPath) {
-          Utils.warn(`导航: 跳转超时 (${nav.text})`);
-          return false;
-        }
-        curPath = newPath;
-        await Utils.sleep(Utils.randMs(1, 2));
+      const curPath = location.pathname;
+      let nextIndex = 0;
+      if (curPath !== '/xz/') {
+        const currentIndex = step.navSteps.findIndex(nav => curPath === nav.hrefMatch);
+        if (currentIndex < 0 || currentIndex >= step.navSteps.length - 1) return false;
+        nextIndex = currentIndex + 1;
       }
+      const nav = step.navSteps[nextIndex];
+      const link = Array.from(document.querySelectorAll('a')).find(a => {
+        const t = a.textContent.trim();
+        const h = a.getAttribute('href') || '';
+        return t.includes(nav.text) && h === nav.hrefMatch;
+      });
+      if (!link) {
+        Utils.warn(`导航: 找不到 "${nav.text}" → ${nav.hrefMatch}`);
+        return false;
+      }
+      await Utils.sleep(Utils.randMs(1, 2));
+      Utils.click(link);
+      Utils.log(`导航: ${curPath} → ${nav.hrefMatch}`);
       return true;
     },
 
@@ -2258,15 +2334,23 @@
       for (const [key, mod] of Object.entries(MOD)) {
         if (mod.match(path)) {
           matched++;
+          const inPlan = AutoPilot.PLAN.some(step => step.module === key);
+          if (AutoPilot.isOn() && inPlan) {
+            Utils.log(`↪ ${key} 由 AutoPilot 独占，Router 不重复执行`);
+            continue;
+          }
           if (isEnabled(key)) {
             Utils.log(`▶ ${key} 模块触发`);
             try {
-              await mod.run();
+              const completed = await mod.run();
+              if (completed === true || !inPlan) {
+                Utils.gset(`mod_${key}_done`, Date.now());
+                Utils.log(`✓ ${key} 完成标志已写入`);
+              } else {
+                Utils.log(`… ${key} 仍有后续动作，不写完成标志`);
+              }
             } catch (e) {
               Utils.warn(`${key} 异常: ${e.message}\n${e.stack}`);
-            } finally {
-              // 写完成标志（无论成功失败），供 Scheduler.onPageLoad 检测
-              Utils.gset(`mod_${key}_done`, Date.now());
             }
           } else {
             Utils.log(`⏸ ${key} 模块已关闭，跳过`);
