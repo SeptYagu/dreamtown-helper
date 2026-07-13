@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.5 metadata", "// @version      3.5" in text and "日常一体化 v3.5" in text)
+require("v3.6 metadata", "// @version      3.6" in text and "日常一体化 v3.6" in text)
 
 coupon_ids = re.search(r"PROP_IDS:\s*\[([^\]]+)\]", text)
 require("food coupon whitelist exists", coupon_ids is not None)
@@ -30,6 +30,8 @@ require("bag no longer clickAll", "Utils.clickAll(links, '礼包')" not in text)
 require("bag completes only when empty", "礼包: 无可用" in text and "return true;" in text)
 
 require("autopilot removed same-page advance", "session.lastPage" not in text and "5s 内重复" not in text)
+require("autopilot clears emergency stop on start", "Utils.gset('autopilot_emergency_stop', false);" in text)
+require("autopilot continues disabled steps on home", "setTimeout(() => this.continue(), 700);" in text)
 require("autopilot requires explicit completion", "if (completed === true)" in text)
 require("router yields plan modules", "由 AutoPilot 独占，Router 不重复执行" in text)
 require("router does not mark action-in-progress complete", "仍有后续动作，不写完成标志" in text)
@@ -50,6 +52,8 @@ require("recipe default is off", text.count("recipe_target_level', 'off'") >= 2)
 require("recipe disables itself after scan", "Utils.gset('recipe_target_level', 'off');" in text)
 
 require("scheduler persists fixed plans", "Utils.gset(`sched_${e.id}_nextAt`, e.nextRunAt);" in text)
+require("scheduler start does not call missing init", "this.init();" not in text)
+require("scheduler start computes immediately on home", "this.computeAll();\n        this.scheduleNext();" in text)
 require("scheduler supports multi-page navigation", "async navigatePhase(phase, currentPath)" in text)
 require("scheduler bag route is two-step", "route: [{ text: '仓库', href: '/xz/warehouse' }, { text: '礼包', href: '/xz/warehouse_2_0' }]" in text)
 require("scheduler guardian route is two-step", "{ text: '挑战守护者', href: '/xz/guardian' }" in text)

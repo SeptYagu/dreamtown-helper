@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.5
+// @name         梦想小镇日常一体化 v3.6
 // @namespace    http://tampermonkey.net/
-// @version      3.5
+// @version      3.6
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.6 变更（2026-07-13 实测修复）
+ * - AutoPilot 启动时清旧紧急停止标志；首页 advance 主动续跑连续关闭模块
+ * - Scheduler.start 删除不存在的 init() 调用，直接计算并安排全部任务
+ *
  * v3.5 变更（2026-07-14）
  * - 跨页任务统一改为“每页只执行第一个动作；关键动作消失才完成”
  * - AutoPilot 独占计划模块，取消 Router 双执行与同页误 advance
@@ -257,7 +261,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.5</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.6</h3><div id="dxzxx-rows"></div>
         <details>
           <summary>餐厅子开关</summary>
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
@@ -417,14 +421,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.5 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.6 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 自动跑全套日常';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.5`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.6`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -1804,7 +1808,12 @@
       Utils.gset(PHASE_KEY, null);  // 清旧状态
       Utils.log('⏰ 调度器: 启动');
       Utils.showStatus('调度器', '启动中…', '#FF9800');
-      this.init();
+      if (location.pathname === '/xz/') {
+        this.computeAll();
+        this.scheduleNext();
+      } else {
+        this.navigateHome();
+      }
     },
 
     stop(reason = '') {
@@ -2166,6 +2175,7 @@
       if (typeof Scheduler !== 'undefined' && Scheduler.isOn()) {
         Scheduler.stop('AutoPilot 启动');
       }
+      Utils.gset('autopilot_emergency_stop', false);
       Utils.gset('autopilot_session', { id: Date.now(), iter: 0 });
       Utils.gset(this.stateKey, { enabled: true, stepIndex: 0, startedAt: Date.now() });
       Utils.log('▶▶ 自动计划启动');
@@ -2309,8 +2319,12 @@
       const state = Utils.gget(this.stateKey, {});
       state.stepIndex = (state.stepIndex || 0) + 1;
       Utils.gset(this.stateKey, state);
-      // 回主页
-      this.navigateToHome();
+      if (location.pathname === '/xz/') {
+        // 关闭模块可能在首页连续跳过；没有页面加载时必须主动续跑
+        setTimeout(() => this.continue(), 700);
+      } else {
+        this.navigateToHome();
+      }
     },
 
     scheduleNext() {
