@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.33 metadata and shared panel version", "// @version      3.33" in text and "const SCRIPT_VERSION = '3.33';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.34 metadata and shared panel version", "// @version      3.34" in text and "const SCRIPT_VERSION = '3.34';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel has no stale hardcoded title", "梦想小镇日常 v3.18" not in text and "梦想小镇日常 v3.20" not in text)
 require("panel doubles desktop width", "width:560px" in text and "box-sizing:border-box" in text)
 require("panel control rows use two columns", "#dxzxx-rows,#dxzxx-project-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" in text)
@@ -88,7 +88,11 @@ require("daily project counts persist on input and change", "addEventListener('i
 require("daily projects use 6am game day", "date.getTime() - 6 * 3600000" in text)
 require("daily friend actions are configurable", "['like', 'dig', 'roach'].some" in text and "DailyProjectState.remaining(type, state)" in text)
 require("daily bar actions are configurable", "DailyProjectState.remaining('fist'" in text and "DailyProjectState.remaining('cup'" in text and "DailyProjectState.remaining('number'" in text)
-require("daily NPC project combines both visits", "拜访NPC（推荐2次）" in text and "visitHere('garden', '菜园姐')" in text and "visitHere('wenjie', '雯姐')" in text)
+require("daily NPC project is one complete round", "拜访NPC（推荐1轮）" in text and "['garden', 'wenjie'].every" in text and "本轮完成 1/1" in text)
+require("daily NPC round includes both visits", "visitHere('garden', '菜园姐')" in text and "visitHere('wenjie', '雯姐')" in text)
+require("daily NPC migrates v3.33 partial count", "v334_npc_round_migrated" in text and "state.counts.npc = complete ? 1 : 0;" in text)
+require("daily NPC target is capped to one round", "id === 'npc' ? 1 : 500" in text)
+require("daily NPC input is capped to one round", "max=\"${p.id === 'npc' ? 1 : 500}\"" in text)
 require("daily NPC is independent from paid market", "module: 'dailyNpc'" in text and "['dailyFriend', 'dailyBar', 'dailyNpc', 'extraWish']" in text)
 require("friend list prioritizes roach markers", "img[src=\"/readImg/xz_cockroach\"]" in text and "const marked = links.filter(hasRoachMark);" in text)
 require("friend floors follow roach markers", "const markedRoachFloor = floorLinks.find" in text and "Utils.click(floorToVisit);" in text)

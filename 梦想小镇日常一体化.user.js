@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.33
+// @name         梦想小镇日常一体化 v3.34
 // @namespace    http://tampermonkey.net/
-// @version      3.33
+// @version      3.34
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.34 变更（2026-07-15 NPC轮次语义修复）
+ * - “拜访NPC”按完整轮次计数：菜园姐与雯姐都处理完才完成1轮
+ * - 推荐次数改为1轮，并迁移v3.33可能在首位NPC后提前完成的状态
+ *
  * v3.33 变更（2026-07-15 菜场、NPC 与链式邮箱修复）
  * - 菜场兼容当前每日菜场 buyDayFood(区块,索引,id)，恢复按旧阈值补足1级菜及指定2级菜
  * - 菜园姐与雯姐合并为独立“拜访NPC（推荐2次）”每日项目，不受付费菜场采购开关影响
@@ -185,7 +189,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.33';
+  const SCRIPT_VERSION = '3.34';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -346,19 +350,26 @@
     { id: 'fist', label: '猜拳（与猜杯合计推荐20次）', recommended: 10, module: 'dailyBar' },
     { id: 'cup', label: '猜酒杯（与猜拳合计推荐20次）', recommended: 10, module: 'dailyBar' },
     { id: 'number', label: '猜数字（推荐1次）', recommended: 1, module: 'dailyBar' },
-    { id: 'npc', label: '拜访NPC（推荐2次）', recommended: 2, module: 'dailyNpc' },
+    { id: 'npc', label: '拜访NPC（推荐1轮）', recommended: 1, module: 'dailyNpc' },
     { id: 'extraWish', label: '额外许愿果（常驻推荐0次）', recommended: 0, module: 'extraWish' },
   ];
   // 从 v3.32 的“拜访雯姐”开关迁移；次数升级为两个 NPC 各一次。
   if (Utils.gget('project_npc_enabled', null) === null && Utils.gget('project_wenjie_enabled', null) !== null) {
     Utils.gset('project_npc_enabled', !!Utils.gget('project_wenjie_enabled', true));
   }
+  if (!Utils.gget('v334_npc_round_migrated', false)) {
+    Utils.gset('project_npc_count', 1);
+    Utils.gset('v334_npc_round_migrated', true);
+  }
   DAILY_PROJECT_DEFS.forEach(p => {
     if (Utils.gget(`project_${p.id}_enabled`, null) === null) Utils.gset(`project_${p.id}_enabled`, p.recommended > 0);
     if (Utils.gget(`project_${p.id}_count`, null) === null) Utils.gset(`project_${p.id}_count`, p.recommended);
   });
   const projectEnabled = (id) => !!Utils.gget(`project_${id}_enabled`, false);
-  const projectTarget = (id) => Math.max(0, Math.min(500, parseInt(Utils.gget(`project_${id}_count`, 0), 10) || 0));
+  const projectTarget = (id) => {
+    const cap = id === 'npc' ? 1 : 500;  // 两位NPC都是服务端每日一次，一天最多执行一轮。
+    return Math.max(0, Math.min(cap, parseInt(Utils.gget(`project_${id}_count`, 0), 10) || 0));
+  };
   const gameDayKey = (date = Utils.getServerTime()) => {
     const shifted = new Date(date.getTime() - 6 * 3600000);
     return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}-${String(shifted.getDate()).padStart(2, '0')}`;
@@ -511,7 +522,7 @@
         const enabled = projectEnabled(p.id);
         const row = document.createElement('div');
         row.className = 'row project-row';
-        row.innerHTML = `<label>${p.label}</label><input class="project-count" type="number" min="0" max="500" value="${projectTarget(p.id)}" data-project-count="${p.id}"><span class="toggle ${enabled ? 'on' : 'off'}" data-project="${p.id}">${enabled ? '开' : '关'}</span>`;
+        row.innerHTML = `<label>${p.label}</label><input class="project-count" type="number" min="0" max="${p.id === 'npc' ? 1 : 500}" value="${projectTarget(p.id)}" data-project-count="${p.id}"><span class="toggle ${enabled ? 'on' : 'off'}" data-project="${p.id}">${enabled ? '开' : '关'}</span>`;
         projectRows.appendChild(row);
       });
 
@@ -2123,7 +2134,7 @@
     },
   };
 
-  // 每日 NPC：菜场菜园姐、酒吧雯姐各一次。独立于付费市场采购开关。
+  // 每日 NPC：一轮内依次处理菜场菜园姐、酒吧雯姐；两位都完成才记1轮。
   MOD.dailyNpc = {
     match: (p) => ['/xz/', '/xz/market', '/xz/square', '/xz/bar'].includes(p),
     schedule: 'daily-project',
@@ -2134,9 +2145,15 @@
       const markVisited = (npcId, label) => {
         if (!state.visited.includes(npcId)) {
           state.visited.push(npcId);
-          state.counts.npc = Math.min(projectTarget('npc'), (state.counts.npc || 0) + 1);
-          Utils.log(`每日NPC: ${label} ${state.counts.npc}/${projectTarget('npc')}`);
+          Utils.log(`每日NPC: ${label} 已处理`);
         }
+      };
+      const syncRound = () => {
+        const complete = ['garden', 'wenjie'].every(id => state.visited.includes(id));
+        // 修复v3.33在只处理菜园姐后就把一次拜访误记成完成的状态。
+        state.counts.npc = complete ? 1 : 0;
+        if (complete) Utils.log('每日NPC: 菜园姐与雯姐均已处理，本轮完成 1/1');
+        return complete;
       };
 
       if (state.pending) {
@@ -2144,8 +2161,12 @@
         if (!/拜访失败|操作失败|今日无法拜访/.test(text)) markVisited(npcId, label);
         else Utils.warn(`每日NPC: ${label} 拜访失败，本次不计数`);
         state.pending = null;
+        syncRound();
         DailyProjectState.save('npc', state);
       }
+      // 即使没有pending，也修正v3.33遗留的不完整轮次计数。
+      syncRound();
+      DailyProjectState.save('npc', state);
       if (DailyProjectState.remaining('npc', state) <= 0) return true;
 
       const go = async (href) => {
@@ -2162,6 +2183,7 @@
         if (!button) {
           // 拜访按钮消失是服务端的每日已完成态；同步本地进度后继续另一位 NPC。
           markVisited(npcId, label);
+          syncRound();
           DailyProjectState.save('npc', state);
           return false;
         }
