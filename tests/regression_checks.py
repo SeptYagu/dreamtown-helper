@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.42 metadata and shared panel version", "// @version      3.42" in text and "const SCRIPT_VERSION = '3.42';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.43 metadata and shared panel version", "// @version      3.43" in text and "const SCRIPT_VERSION = '3.43';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -150,6 +150,16 @@ require("restaurant master switch is clearly labelled", "餐厅管理（总开�
 restaurant_start = text.index("MOD.restaurant = {")
 restaurant_end = text.index("// ----- 10.", restaurant_start)
 restaurant_run = text[restaurant_start:restaurant_end]
+require("own restaurant learns id from two real sources", "SELF_ID_KEY: 'self_restaurant_id'" in restaurant_run and "titleId" in restaurant_run and "floorIds" in restaurant_run and "titleId !== floorId" in restaurant_run)
+require("own restaurant rejects friend uid floors", "isSelfFloor(path)" in restaurant_run and "不是自己的餐厅" in restaurant_run and "保持只读" in restaurant_run)
+require("own restaurant floor navigation is scoped to self id", "h === `/xz/restaurant_${selfId}_${floor}`" in restaurant_run)
+require("own restaurant actions require an explicit run phase", "requiresScheduled: true" in restaurant_run)
+require("router learns self id read-only on manual overview", "if (path === '/xz/restaurant') MOD.restaurant.learnSelfId();" in text)
+daily_friend_start = text.index("MOD.dailyFriend = {")
+daily_friend_end = text.index("// 每日 NPC", daily_friend_start)
+daily_friend_run = text[daily_friend_start:daily_friend_end]
+require("daily friend still owns all three friend actions", "addLikeOne" in daily_friend_run and "killCockroach" in daily_friend_run and "digOne" in daily_friend_run)
+require("daily friend still traverses friend pages", "下一页" in daily_friend_run and r"friend_0_\d+" in daily_friend_run and "state.visited" in daily_friend_run)
 restaurant_ui_start = text.index("<summary>餐厅子开关</summary>")
 restaurant_ui_end = text.index("<summary>食谱升级配置</summary>", restaurant_ui_start)
 restaurant_ui = text[restaurant_ui_start:restaurant_ui_end]

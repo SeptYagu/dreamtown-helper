@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.42
+// @name         梦想小镇日常一体化 v3.43
 // @namespace    http://tampermonkey.net/
-// @version      3.42
+// @version      3.43
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.43 变更（2026-07-15 自己/好友餐厅隔离）
+ * - 自己餐厅概览自动从“IDxxxx”和真实楼层链接交叉学习餐厅ID
+ * - restaurant_<uid>_<floor> 只有uid等于已记录自己的ID时才执行餐厅管理
+ * - 餐厅管理增加运行阶段隔离，普通浏览好友餐厅不再打蟑螂、切楼或刷新
+ *
  * v3.42 变更（2026-07-14 设施续期与安全补货）
  * - 设施流程改为每12小时执行：未设置则继续安装，已设置则每轮各续期一次
  * - 安装/续期完成后依次进入三个真实商店，明确读取“拥有数量”后才判断库存
@@ -226,7 +231,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.42';
+  const SCRIPT_VERSION = '3.43';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -1479,7 +1484,47 @@
   MOD.restaurant = {
     match: (p) => p === '/xz/restaurant' || /\/xz\/restaurant_\d+_\d+/.test(p),
     schedule: 'restaurant',
+    requiresScheduled: true,
+    SELF_ID_KEY: 'self_restaurant_id',
     MAX_ROACH_ATTEMPTS: 20,
+
+    // 自家概览同时提供“IDxxxx”标题和 restaurant_<uid>_<floor> 楼层链接。
+    // 两种来源一致才保存，避免从好友链接或异常页面误学ID。
+    learnSelfId() {
+      if (location.pathname !== '/xz/restaurant') return null;
+      const bodyText = document.body?.textContent || '';
+      const titleId = bodyText.match(/(?:^|\s)ID\s*(\d+)(?:\s|$)/)?.[1] || null;
+      const floorIds = new Set(Array.from(document.querySelectorAll('a[href^="/xz/restaurant_"]')).flatMap(a => {
+        const match = (a.getAttribute('href') || '').match(/^\/xz\/restaurant_(\d+)_([2-9]\d*)$/);
+        return match ? [match[1]] : [];
+      }));
+      const floorId = floorIds.size === 1 ? Array.from(floorIds)[0] : null;
+      if (!titleId || !floorId || titleId !== floorId) {
+        Utils.warn(`餐厅: 自己ID交叉验证失败（标题=${titleId || '无'}，楼层=${floorId || (floorIds.size > 1 ? '冲突' : '无')}），不更新记录`);
+        return null;
+      }
+      const previous = String(Utils.gget(this.SELF_ID_KEY, '') || '');
+      if (previous !== titleId) {
+        Utils.gset(this.SELF_ID_KEY, titleId);
+        Utils.log(`餐厅: 已学习自己的餐厅ID ${titleId}${previous ? `（原 ${previous}）` : ''}`);
+      }
+      return titleId;
+    },
+
+    getSelfId() {
+      return String(Utils.gget(this.SELF_ID_KEY, '') || '');
+    },
+
+    parseFloorPath(path = location.pathname) {
+      const match = path.match(/^\/xz\/restaurant_(\d+)_(\d+)$/);
+      return match ? { uid: match[1], floor: Number(match[2]) } : null;
+    },
+
+    isSelfFloor(path = location.pathname) {
+      const info = this.parseFloorPath(path);
+      const selfId = this.getSelfId();
+      return !!(info && selfId && info.uid === selfId);
+    },
 
     // 每页先处理直接显示的蟑螂；当前自家1楼就是 /xz/restaurant，而不是 restaurant_<uid>_1。
     async killCurrentRoach() {
@@ -1574,6 +1619,7 @@
     // 检测感染楼层：找 cockroach 图标邻近的 restaurant 链接
     detectInfectedFloors() {
       const floors = new Set();
+      const selfId = this.getSelfId();
       const cockroachImgs = document.querySelectorAll(
         'img[src*="cockroach"], img[alt*="蟑螂"], img[alt*="cockroach"], img[title*="蟑螂"]'
       );
@@ -1583,8 +1629,11 @@
           const el = node.matches?.('a[href*="/xz/restaurant_"]')
             ? node
             : node.querySelector?.('a[href*="/xz/restaurant_"]');
-          if (!el || !/\/xz\/restaurant_\d+_\d+/.test(el.getAttribute('href') || '')) return false;
-          const m = el.href.match(/_(\d+)$/);
+          if (!el) return false;
+          const href = el.getAttribute('href') || '';
+          const own = href.match(/^\/xz\/restaurant_(\d+)_(\d+)$/);
+          if (!own || !selfId || own[1] !== selfId) return false;
+          const m = href.match(/_(\d+)$/);
           if (m) floors.add(+m[1]);
           return !!m;
         };
@@ -1598,7 +1647,10 @@
         document.querySelectorAll('p, tr, div').forEach(row => {
           const txt = row.textContent;
           if ((txt.includes('感染') || txt.includes('蟑螂')) && txt.length < 200) {
-            const link = row.querySelector('a[href*="/xz/restaurant_"]');
+            const link = Array.from(row.querySelectorAll('a[href^="/xz/restaurant_"]')).find(a => {
+              const own = (a.getAttribute('href') || '').match(/^\/xz\/restaurant_(\d+)_(\d+)$/);
+              return own && selfId && own[1] === selfId;
+            });
             if (link) {
               const m = link.href.match(/_(\d+)$/);
               if (m) floors.add(+m[1]);
@@ -1614,9 +1666,14 @@
 
     // 导航到指定楼层
     async navigateToFloor(floor) {
+      const selfId = this.getSelfId();
+      if (!selfId) {
+        Utils.warn('餐厅: 尚未学习自己的餐厅ID，拒绝进入楼层');
+        return false;
+      }
       const link = Array.from(document.querySelectorAll('a')).find(a => {
         const h = a.getAttribute('href') || '';
-        return /\/xz\/restaurant_\d+_\d+/.test(h) && h.endsWith(`_${floor}`);
+        return h === `/xz/restaurant_${selfId}_${floor}`;
       });
       if (link) {
         await Utils.sleep(Utils.randMs(1, 2));
@@ -1651,9 +1708,18 @@
     async run() {
       const path = location.pathname;
       if (path === '/xz/restaurant') {
+        if (!this.learnSelfId()) {
+          Utils.warn('餐厅: 无法确认自己的餐厅ID，本轮安全停止');
+          return true;
+        }
         return this.processOverview();
       }
-      if (/\/xz\/restaurant_\d+_\d+/.test(path)) {
+      const floorInfo = this.parseFloorPath(path);
+      if (floorInfo) {
+        if (!this.isSelfFloor(path)) {
+          Utils.log(`餐厅: ${floorInfo.uid} 不是自己的餐厅 ${this.getSelfId() || '（尚未学习）'}，保持只读`);
+          return true;
+        }
         return this.processFloor();
       }
       return true;
@@ -3701,6 +3767,8 @@
       if (Scheduler.isOn() && await Scheduler.recoverExpiredPhase(path)) return;
       const activePhase = Scheduler.isOn() ? Utils.gget(PHASE_KEY, null) : null;
       Utils.log(`路由: ${path}`);
+      // 读取自己餐厅ID是只读校准，普通手动浏览概览时也允许；餐厅动作仍受阶段隔离。
+      if (path === '/xz/restaurant') MOD.restaurant.learnSelfId();
       let matched = 0;
       for (const [key, mod] of Object.entries(MOD)) {
         if (mod.match(path)) {
