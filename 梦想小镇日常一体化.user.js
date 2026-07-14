@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.26
+// @name         梦想小镇日常一体化 v3.27
 // @namespace    http://tampermonkey.net/
-// @version      3.26
-// @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
+// @version      3.27
+// @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
 // @updateURL    https://raw.githubusercontent.com/SeptYagu/dreamtown-helper/main/%E6%A2%A6%E6%83%B3%E5%B0%8F%E9%95%87%E6%97%A5%E5%B8%B8%E4%B8%80%E4%BD%93%E5%8C%96.meta.js
@@ -180,7 +180,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.26';
+  const SCRIPT_VERSION = '3.27';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -325,6 +325,9 @@
     if (['dailyFriend', 'dailyBar', 'extraWish'].includes(id)) {
       return DAILY_PROJECT_DEFS.some(p => p.module === id && projectEnabled(p.id) && projectTarget(p.id) > 0);
     }
+    if (id === 'mailbox') {
+      return Utils.gget('mod_restaurant_enabled', true) && Utils.gget('restaurant_mailbox', true);
+    }
     return Utils.gget(`mod_${id}_enabled`, true);
   };
 
@@ -356,6 +359,7 @@
     restaurant_cockroach: false,
     restaurant_oil: true,
     restaurant_dig: false,
+    restaurant_mailbox: true,
   };
   Object.entries(RESTAURANT_SUB_DEFAULTS).forEach(([k, d]) => {
     if (Utils.gget(k, null) === null) Utils.gset(k, d);
@@ -427,6 +431,7 @@
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
           <div class="row sub"><label>⛽ 自动添油</label><span class="toggle ${Utils.gget('restaurant_oil', true) ? 'on' : 'off'}" data-sub="restaurant_oil">${Utils.gget('restaurant_oil', true) ? '开' : '关'}</span></div>
           <div class="row sub"><label>📦 自动翻橱柜</label><span class="toggle ${Utils.gget('restaurant_dig', false) ? 'on' : 'off'}" data-sub="restaurant_dig">${Utils.gget('restaurant_dig', false) ? '开' : '关'}</span></div>
+          <div class="row sub"><label>📬 餐厅后领取系统邮件</label><span class="toggle ${Utils.gget('restaurant_mailbox', true) ? 'on' : 'off'}" data-sub="restaurant_mailbox">${Utils.gget('restaurant_mailbox', true) ? '开' : '关'}</span></div>
         </details>
         <details>
           <summary>食谱升级配置</summary>
@@ -514,6 +519,11 @@
             t.classList.toggle('on');
             t.classList.toggle('off');
             t.textContent = !cur ? '开' : '关';
+            if (sub === 'restaurant_mailbox' && Scheduler.isOn()) {
+              Utils.gset('sched_mailboxAfterRestaurant_nextAt', 0);
+              Scheduler.computeAll();
+              Scheduler.scheduleNext();
+            }
           }
         });
       });
@@ -1414,6 +1424,35 @@
         return this.processFloor();
       }
       return true;
+    },
+  };
+
+  // ----- 9.1 餐厅后系统邮箱礼物 -----
+  // 只检查系统邮箱第一页：新邮件位于顶部，历史分页不应在每轮餐厅后重复扫描。
+  MOD.mailbox = {
+    match: (p) => p === '/xz/mailbox' || p === '/xz/mailbox_0_1',
+    schedule: 'after-restaurant',
+    async run() {
+      if (!Utils.gget('restaurant_mailbox', true)) {
+        Utils.log('邮箱: 餐厅后领取开关关');
+        return true;
+      }
+
+      const claim = Array.from(document.querySelectorAll('a')).find(a => {
+        const text = (a.textContent || '').trim();
+        const onclick = (a.getAttribute('onclick') || '').trim();
+        return text === '领取' && /^getMailProp\(\d+,\s*0\);?$/.test(onclick);
+      });
+      if (!claim) {
+        Utils.log('邮箱: 系统首页没有可领取礼物');
+        Utils.showStatus('邮箱', '系统礼物已检查');
+        return true;
+      }
+
+      await Utils.sleep(Utils.randMs(1, 2));
+      Utils.click(claim);
+      Utils.log('邮箱: 领取第一份系统礼物，刷新后继续检查');
+      return false;
     },
   };
 
@@ -2441,6 +2480,16 @@
       },
     },
 
+    // 系统邮箱：餐厅收尾回首页后立即检查；平时跟随下一次餐厅，不独立抢跑。
+    {
+      id: 'mailboxAfterRestaurant', module: 'mailbox', target: '/xz/mailbox_0_1', nav: '系统邮箱', route: [{ href: '/xz/mailbox_0_1' }], runMs: 30000,
+      computeNext() {
+        const nowMs = Utils.getServerTime().getTime();
+        const restaurantNext = Utils.gget('sched_restaurant_nextAt', 0);
+        return restaurantNext > nowMs ? restaurantNext + 60000 : nowMs + 3600000;
+      },
+    },
+
     // 设施：智能调度 — 跟随最短剩余时间的设施 +1h 后重试
     // facility_min_remaining_ms 是"持续时间"（毫秒），不是时间戳
     {
@@ -2870,7 +2919,8 @@
       Utils.log(`调度器: ${phase.id} 流程结束 ✓`);
 
       // Scheduler 的全部绝对时间统一使用页面服务器时间，避免本地时区与驯鹿报时错日。
-      Utils.gset(`sched_${phase.id}_lastRun`, Utils.getServerTime().getTime());
+      const completedAt = Utils.getServerTime().getTime();
+      Utils.gset(`sched_${phase.id}_lastRun`, completedAt);
       Utils.gset(PHASE_KEY, null);
 
       // 吃饭模块：fire 后根据当前小时 mark 对应窗口（避免同日重入同一窗口）
@@ -2896,6 +2946,17 @@
 
       if (this.isOn()) {
         this.computeAll();
+        // 餐厅已经回到首页：立即建立邮箱phase，确保其它积压任务不能插到两者之间。
+        if (phase.id === 'restaurant' && isEnabled('mailbox')) {
+          const mailboxEntry = ALL_ENTRIES().find(e => e.id === 'mailboxAfterRestaurant');
+          if (mailboxEntry) {
+            mailboxEntry.nextRunAt = completedAt;
+            Utils.gset('sched_mailboxAfterRestaurant_nextAt', completedAt);
+            Utils.log('调度器: 餐厅后立即检查系统邮箱');
+            void this.fireToTarget(mailboxEntry);
+            return;
+          }
+        }
         this.scheduleNext();
       } else {
         Utils.log('调度器已停止，不再 schedule');
@@ -2924,6 +2985,7 @@
       { module: 'egg',        navSteps: [{ text: '>>小镇扭蛋活动<<',    hrefMatch: '/xz/activity_egg' }] },
       { module: 'energy',     navSteps: [{ text: '吃饭活动',            hrefMatch: '/xz/activity_energy' }] },
       { module: 'restaurant', navSteps: [{ text: '餐厅',                hrefMatch: '/xz/restaurant' }] },
+      { module: 'mailbox',    navSteps: [{ text: '',                    hrefMatch: '/xz/mailbox_0_1' }] },
       { module: 'facility',   navSteps: [{ text: '设施',                hrefMatch: '/xz/restaurant_facility' }] },
       { module: 'bag',        navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' },
                                          { text: '礼包',                hrefMatch: '/xz/warehouse_2_0' }] },
