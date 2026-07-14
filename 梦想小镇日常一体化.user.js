@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.13
+// @name         梦想小镇日常一体化 v3.14
 // @namespace    http://tampermonkey.net/
-// @version      3.13
+// @version      3.14
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,12 @@
 // ==/UserScript==
 
 /*
+ * v3.14 变更（2026-07-14 长期调度修复）
+ * - 到期任务保留在队列中逐个执行，不再因其他任务占用而跳到下一周期
+ * - 食材券加入每日调度；市场修复 23 点跨日并支持当前小时补跑
+ * - 守护者/食谱恢复精确 24 小时周期，不再累计正向抖动
+ * - 食谱按页面真实“可升级”链接导航，配置名称统一为“中品”
+ *
  * v3.13 变更（2026-07-14 食谱目标等级修复）
  * - 恢复详情页当前等级解析，达到目标立即返回列表，不再升级到材料不足
  * - 兼容当前站点“中品”等级名称（与旧配置“特色”同级），解析失败时安全停止
@@ -105,7 +111,7 @@
  *
  * 定时策略：
  *   每日 7:30 ± 15min  ：签到/许愿/食神/宝箱/食材券/礼包/季节/扭蛋
- *   每日 24h 硬定时   ：守护者/食谱
+ *   精确 24h 硬定时   ：守护者/食谱
  *   每日 3 期          ：吃饭（7-10→12, 12-15→18, 18-21→次日7）
  *   整点 6-23          ：市场
  *   17-45min 随机      ：餐厅管理
@@ -312,7 +318,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.13</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.14</h3><div id="dxzxx-rows"></div>
         <details>
           <summary>餐厅子开关</summary>
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
@@ -324,7 +330,7 @@
           <div class="label">目标等级</div>
           <select id="dxzxx-recipe-level">
             <option value="off">关闭升级</option>
-            <option value="特色">升级到中品（原特色）</option>
+            <option value="中品">升级到中品</option>
             <option value="上品">升级到上品</option>
             <option value="极品">升级到极品</option>
             <option value="金牌">升级到金牌</option>
@@ -340,10 +346,10 @@
           <div id="dxzxx-plan-list" class="plan-list"></div>
         </details>
         <button class="run-btn" id="dxzxx-run">▶ 立即执行本页</button>
-        <button class="run-btn" id="dxzxx-autopilot" style="background:#FF9800;color:#000;">🚀 自动跑全套日常</button>
+        <button class="run-btn" id="dxzxx-autopilot" style="background:#FF9800;color:#000;">🚀 立即跑一轮全套</button>
         <button class="run-btn" id="dxzxx-stop" style="background:#f44;color:#fff;display:none;">⏹ 立即停止（Esc）</button>
         <details id="dxzxx-sched-wrap" style="margin-top:6px;">
-          <summary style="cursor:pointer;color:#fff;font-size:13px;padding:6px;background:rgba(255,152,0,0.25);border-radius:4px;">⏰ 调度器（穷举 + 定时）</summary>
+          <summary style="cursor:pointer;color:#fff;font-size:13px;padding:6px;background:rgba(255,152,0,0.25);border-radius:4px;">⏰ 长期循环调度器</summary>
           <div style="padding:6px;background:rgba(0,0,0,0.15);border-radius:4px;margin-top:4px;">
             <div id="dxzxx-sched-status" style="font-size:12px;color:#fff;margin-bottom:6px;line-height:1.5;">⏸ 未启动</div>
             <div id="dxzxx-sched-list" style="font-size:11px;color:#aaa;margin-bottom:6px;max-height:140px;overflow-y:auto;"></div>
@@ -474,14 +480,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.13 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.14 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
-        btn.textContent = '🚀 自动跑全套日常';
+        btn.textContent = '🚀 立即跑一轮全套';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.13`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.14`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -1345,7 +1351,7 @@
   //   - 失败检测：含"食谱学习失败"或"未达成"的容器存在则跳过
   //   - 翻页：找"下一页"链接
   // 配置（GM 持久化）：
-  //   recipe_target_level: 目标等级（'off'/'特色'/'上品'/'极品'/'金牌'/'金牌1-10级'）
+  //   recipe_target_level: 目标等级（'off'/'中品'/'上品'/'极品'/'金牌'/'金牌1-10级'）
   //   recipe_learn: 是否自动学习（默认 true）
   MOD.recipe = {
     match: (p) => /^\/xz\/cook_\d+/.test(p) || /\/xz\/cookbook_/.test(p) || /\/xz\/cook_universal_/.test(p),
@@ -1353,7 +1359,7 @@
 
     // 等级映射：旧脚本 v4.0 完整保留
     LEVEL_MAP: {
-      '普通': 0, '特色': 1, '中品': 1, '上品': 2, '极品': 3, '金牌': 4,
+      '普通': 0, '中品': 1, '特色': 1, '上品': 2, '极品': 3, '金牌': 4,
       '金牌1级': 4, '金牌2级': 5, '金牌3级': 6, '金牌4级': 7, '金牌5级': 8,
       '金牌6级': 9, '金牌7级': 10, '金牌8级': 11, '金牌9级': 12, '金牌10级': 13,
     },
@@ -1766,11 +1772,12 @@
     { id: 'box',     module: 'box',     target: '/xz/box',             nav: '酒吧', route: [{ text: '酒吧', href: '/xz/bar' }, { text: '开宝箱', href: '/xz/box' }], slot: '7:30', jitterMin: 0, jitterMax: 15, runOnce: true, runMs: 8000 },
     { id: 'season',  module: 'season',  target: '/xz/activity_season', nav: '>>夏日签到活动<<', slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 5000 },
     { id: 'egg',     module: 'egg',     target: '/xz/activity_egg',    nav: '>>小镇扭蛋活动<<', slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 8000 },
+    { id: 'foodCoupon', module: 'foodCoupon', target: '/xz/warehouse', nav: '仓库', slot: '7:30', jitterMin: 0, jitterMax: 15, runOnce: true, runMs: 30000 },
     { id: 'bag',     module: 'bag',     target: '/xz/warehouse_2_0',   nav: '仓库', route: [{ text: '仓库', href: '/xz/warehouse' }, { text: '礼包', href: '/xz/warehouse_2_0' }], slot: '7:30', jitterMin: 0, jitterMax: 15, runOnce: true, runMs: 8000 },
 
-    // 24h 独立硬定时（从上次跑完算起 24h ± 60min jitter）
-    { id: 'guardian', module: 'guardian', target: '/xz/guardian', nav: '神殿', route: [{ text: '神殿', href: '/xz/temple' }, { text: '挑战守护者', href: '/xz/guardian' }], slot: '24h', jitterMin: 0, jitterMax: 60, runOnce: true, runMs: 10000 },
-    { id: 'recipe', module: 'recipe', target: '/xz/cookbook_8_3_1', nav: '食谱', route: [{ text: '食谱', href: '/xz/cookbook' }, { text: '可升级', href: '/xz/cookbook_8_3_1' }], slot: '24h', jitterMin: 0, jitterMax: 60, runOnce: true, runMs: 30000 },
+    // 24h 独立硬定时（严格从上次跑完算起 24h）
+    { id: 'guardian', module: 'guardian', target: '/xz/guardian', nav: '神殿', route: [{ text: '神殿', href: '/xz/temple' }, { text: '挑战守护者', href: '/xz/guardian' }], slot: '24h', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 10000 },
+    { id: 'recipe', module: 'recipe', target: '/xz/cookbook', nav: '食谱', route: [{ text: '食谱', href: '/xz/cookbook' }, { text: '可升级', hrefPattern: '^/xz/cookbook_\\d+_3_1$' }], slot: '24h', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 30000 },
   ];
 
   // 任务频次参考表（已迁移到 DYNAMIC_SCHEDULE，此处仅注释保留）
@@ -1839,19 +1846,43 @@
       computeNext() {
         const now = Utils.getServerTime();
         const nowMs = now.getTime();
-        const next = new Date(now);
-        next.setMinutes(0, 0, 0);
-        next.setHours(next.getHours() + 1);
-        next.setSeconds(30 + Math.floor(Math.random() * 270));
-        // 超出 6-23 范围 → 明天 6:00 + jitter
-        const hour = next.getHours();
-        if (hour < 6 || hour >= 24) {
-          next.setDate(next.getDate() + 1);
-          next.setHours(6, 0, 0, 0);
-          next.setSeconds(30 + Math.floor(Math.random() * 270));
+        const hour = now.getHours();
+        const lastRun = Utils.gget('sched_market_lastRun', 0);
+        const last = lastRun ? new Date(lastRun) : null;
+        const ranThisHour = !!last &&
+          last.getFullYear() === now.getFullYear() &&
+          last.getMonth() === now.getMonth() &&
+          last.getDate() === now.getDate() &&
+          last.getHours() === hour;
+        const withJitter = (date) => {
+          date.setMinutes(0, 0, 0);
+          date.setSeconds(30 + Math.floor(Math.random() * 270));
+          return date;
+        };
+
+        // 凌晨：排当天 6 点，不能多加一天
+        if (hour < 6) {
+          const todaySix = new Date(now);
+          todaySix.setHours(6, 0, 0, 0);
+          return withJitter(todaySix).getTime();
         }
-        if (next.getTime() <= nowMs) next = new Date(nowMs + 60000);
-        return next.getTime();
+
+        // 6-23 点当前小时尚未完成：保留本小时，错过抖动点则 5 秒后补跑
+        if (hour <= 23 && !ranThisHour) {
+          const currentSlot = withJitter(new Date(now));
+          return currentSlot.getTime() > nowMs ? currentSlot.getTime() : nowMs + 5000;
+        }
+
+        // 23 点已完成 → 次日 6 点；其余时段 → 下一整点
+        if (hour >= 23) {
+          const tomorrow = new Date(now);
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          tomorrow.setHours(6, 0, 0, 0);
+          return withJitter(tomorrow).getTime();
+        }
+        const nextHour = new Date(now);
+        nextHour.setHours(hour + 1, 0, 0, 0);
+        return withJitter(nextHour).getTime();
       },
     },
 
@@ -2015,9 +2046,12 @@
       const entry = ALL_ENTRIES().find(e => e.id === phase.id);
       if (!entry) return false;
       const route = entry.route || [{ text: entry.nav, href: entry.target }];
+      const matchesStep = (step, href) => step.href
+        ? href === step.href
+        : !!step.hrefPattern && new RegExp(step.hrefPattern).test(href);
       let nextIndex = 0;
       if (currentPath !== '/xz/') {
-        const currentIndex = route.findIndex(step => step.href === currentPath);
+        const currentIndex = route.findIndex(step => matchesStep(step, currentPath));
         if (currentIndex < 0 || currentIndex >= route.length - 1) return false;
         nextIndex = currentIndex + 1;
       }
@@ -2025,12 +2059,12 @@
       const link = Array.from(document.querySelectorAll('a')).find(a => {
         const text = (a.textContent || '').trim();
         const href = a.getAttribute('href') || '';
-        return href === next.href && (!next.text || text.includes(next.text));
+        return matchesStep(next, href) && (!next.text || text.includes(next.text));
       });
       if (!link) return false;
       await Utils.sleep(Utils.randMs(1, 2));
       Utils.click(link);
-      Utils.log(`调度器导航: ${currentPath} → ${next.href}`);
+      Utils.log(`调度器导航: ${currentPath} → ${next.href || next.hrefPattern}`);
       return true;
     },
 
@@ -2041,13 +2075,14 @@
 
       DAILY_SCHEDULE.forEach(e => {
         const saved = Utils.gget(`sched_${e.id}_nextAt`, 0);
-        e.nextRunAt = saved > nowMs ? saved : this.computeFixedNext(e, nowMs);
+        // 已到点但尚未完成的计划必须保留；只有完成时 onReturnFromTarget 才清零。
+        e.nextRunAt = saved > 0 ? saved : this.computeFixedNext(e, nowMs);
         Utils.gset(`sched_${e.id}_nextAt`, e.nextRunAt);
       });
 
       DYNAMIC_SCHEDULE.forEach(e => {
         const saved = Utils.gget(`sched_${e.id}_nextAt`, 0);
-        e.nextRunAt = saved > nowMs ? saved : e.computeNext();
+        e.nextRunAt = saved > 0 ? saved : e.computeNext();
         Utils.gset(`sched_${e.id}_nextAt`, e.nextRunAt);
       });
     },
@@ -2069,7 +2104,7 @@
           if (base.getTime() <= nowMs) base.setDate(base.getDate() + 1);
           baseMs = base.getTime();
         }
-        // jitter
+        // 24h 项当前配置为 0 jitter，保留通用字段方便以后显式配置
         const jitterMs = (Math.random() * (entry.jitterMax - entry.jitterMin) + entry.jitterMin) * 60000;
         let next = baseMs + jitterMs;
         if (next <= nowMs) next = nowMs + 60000;  // 已过 → 1min 后
@@ -2213,7 +2248,8 @@
     onReturnFromTarget(phase) {
       Utils.log(`调度器: ${phase.id} 流程结束 ✓`);
 
-      Utils.gset(`sched_${phase.id}_lastRun`, Date.now());
+      // Scheduler 的全部绝对时间统一使用页面服务器时间，避免本地时区与驯鹿报时错日。
+      Utils.gset(`sched_${phase.id}_lastRun`, Utils.getServerTime().getTime());
       Utils.gset(PHASE_KEY, null);
 
       // 吃饭模块：fire 后根据当前小时 mark 对应窗口（避免同日重入同一窗口）
@@ -2265,7 +2301,7 @@
       { module: 'bag',        navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' },
                                          { text: '礼包',                hrefMatch: '/xz/warehouse_2_0' }] },
       { module: 'recipe',     navSteps: [{ text: '食谱',                hrefMatch: '/xz/cookbook' },
-                                         { text: '可升级',              hrefMatch: '/xz/cookbook_8_3_1' }] },
+                                         { text: '可升级',              hrefPattern: '^/xz/cookbook_\\d+_3_1$' }] },
       { module: 'guardian',   navSteps: [{ text: '神殿',                hrefMatch: '/xz/temple' },
                                          { text: '守护者',              hrefMatch: '/xz/guardian' }] },
     ],
@@ -2371,9 +2407,12 @@
 
     async gotoStep(step) {
       const curPath = location.pathname;
+      const matchesNav = (nav, href) => nav.hrefMatch
+        ? href === nav.hrefMatch
+        : !!nav.hrefPattern && new RegExp(nav.hrefPattern).test(href);
       let nextIndex = 0;
       if (curPath !== '/xz/') {
-        const currentIndex = step.navSteps.findIndex(nav => curPath === nav.hrefMatch);
+        const currentIndex = step.navSteps.findIndex(nav => matchesNav(nav, curPath));
         if (currentIndex < 0 || currentIndex >= step.navSteps.length - 1) return false;
         nextIndex = currentIndex + 1;
       }
@@ -2381,15 +2420,15 @@
       const link = Array.from(document.querySelectorAll('a')).find(a => {
         const t = a.textContent.trim();
         const h = a.getAttribute('href') || '';
-        return t.includes(nav.text) && h === nav.hrefMatch;
+        return t.includes(nav.text) && matchesNav(nav, h);
       });
       if (!link) {
-        Utils.warn(`导航: 找不到 "${nav.text}" → ${nav.hrefMatch}`);
+        Utils.warn(`导航: 找不到 "${nav.text}" → ${nav.hrefMatch || nav.hrefPattern}`);
         return false;
       }
       await Utils.sleep(Utils.randMs(1, 2));
       Utils.click(link);
-      Utils.log(`导航: ${curPath} → ${nav.hrefMatch}`);
+      Utils.log(`导航: ${curPath} → ${nav.hrefMatch || nav.hrefPattern}`);
       return true;
     },
 
@@ -2494,6 +2533,20 @@
 
   // ==================== 启动 ====================
   function init() {
+    // v3.14：站点已将旧一级名称“特色”改为“中品”，读取旧配置时一次性迁移。
+    if (Utils.gget('recipe_target_level', 'off') === '特色') {
+      Utils.gset('recipe_target_level', '中品');
+    }
+    // 丢弃旧版已算出的错误市场跨日时间及带正向抖动的 24h 时间；按 lastRun 重算。
+    if (Utils.gget('scheduler_schema_version', 1) < 2) {
+      const serverOffset = Utils.getServerTime().getTime() - Date.now();
+      ALL_ENTRIES().forEach(({ id }) => {
+        const oldLastRun = Utils.gget(`sched_${id}_lastRun`, 0);
+        if (oldLastRun > 0) Utils.gset(`sched_${id}_lastRun`, oldLastRun + serverOffset);
+      });
+      ['market', 'guardian', 'recipe'].forEach(id => Utils.gset(`sched_${id}_nextAt`, 0));
+      Utils.gset('scheduler_schema_version', 2);
+    }
     Panel.create();
     // 主页加载：若 AutoPilot 开着，显示状态
     if (AutoPilot.isOn()) {
