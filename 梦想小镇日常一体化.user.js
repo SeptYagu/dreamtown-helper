@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.36
+// @name         梦想小镇日常一体化 v3.37
 // @namespace    http://tampermonkey.net/
-// @version      3.36
+// @version      3.37
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.37 变更（2026-07-14 自家餐厅动作修复）
+ * - 第15项改名“餐厅管理（总开关）”，明确其与左上角子开关的主从关系
+ * - 删除自家餐厅不存在的翻柜功能；好友翻柜仍由独立“每日好友项目”负责
+ * - 自家餐厅先直接点击当前楼层的 killCockroachOne，再扫描带标记的其它楼层
+ *
  * v3.36 变更（2026-07-14 餐厅死循环与调度自救）
  * - 修复蟑螂图标邻接查找在两个兄弟元素间往返，导致餐厅总览主线程永久卡死
  * - 调度阶段增加绝对超时；过期餐厅任务先关闭高风险动作并返回首页，避免重开后续跑旧 running
@@ -197,7 +202,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.36';
+  const SCRIPT_VERSION = '3.37';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -320,7 +325,7 @@
     { id: 'egg',        label: '6. 免费扭蛋',     default: true,  schedule: 'daily' },
     { id: 'foodCoupon', label: '7. 食材券',       default: true,  schedule: 'daily' },  // 用旧 propId + 新页面适配
     { id: 'energy',     label: '8. 吃饭/体力',    default: true,  schedule: 'meal' },
-    { id: 'restaurant', label: '9. 餐厅添油',     default: true,  schedule: 'restaurant' },  // 翻柜/打蟑默认关
+    { id: 'restaurant', label: '9. 餐厅管理（总开关）', default: true, schedule: 'restaurant' },
     { id: 'facility',   label: '10. 设施安装',    default: true,  schedule: 'facility' },
     { id: 'bag',        label: '11. 礼包开启',    default: true,  schedule: 'daily' },
     { id: 'recipe',     label: '12. 食谱升级',    default: true,  schedule: 'recipe' },    // 默认开；目标等级/学习开关可调
@@ -387,35 +392,17 @@
   const RESTAURANT_SUB_DEFAULTS = {
     restaurant_cockroach: false,
     restaurant_oil: true,
-    restaurant_dig: false,
     restaurant_mailbox: true,
   };
   Object.entries(RESTAURANT_SUB_DEFAULTS).forEach(([k, d]) => {
     if (Utils.gget(k, null) === null) Utils.gset(k, d);
   });
 
-  // v3.9 迁移救援：旧版本可能已在餐厅翻柜失败页形成完整刷新死循环
-  if (!Utils.gget('v39_restaurant_rescue_done', false) && location.pathname.startsWith('/xz/restaurant')) {
-    Utils.gset('v39_restaurant_rescue_done', true);
-    Utils.gset('mod_restaurant_enabled', false);
+  // v3.37：自家餐厅没有翻柜动作，清理旧版本可能残留的开关/计数。
+  if (!Utils.gget('v337_restaurant_dig_removed', false)) {
     Utils.gset('restaurant_dig', false);
     Utils.gset('restaurant_dig_attempts', 0);
-    Utils.gset('restaurant_remaining_floors', []);
-    Utils.gset('autopilot_state', { enabled: false });
-    Utils.gset('autopilot_session', null);
-    Utils.gset('autopilot_emergency_stop', false);
-  }
-  if (!Utils.gget('v310_restaurant_rescue_done', false) && location.pathname.startsWith('/xz/restaurant')) {
-    Utils.gset('v310_restaurant_rescue_done', true);
-    Utils.gset('mod_restaurant_enabled', false);
-    Utils.gset('restaurant_cockroach', false);
-    Utils.gset('restaurant_dig', false);
-    Utils.gset('restaurant_roach_attempts', 0);
-    Utils.gset('restaurant_dig_attempts', 0);
-    Utils.gset('restaurant_remaining_floors', []);
-    Utils.gset('autopilot_state', { enabled: false });
-    Utils.gset('autopilot_session', null);
-    Utils.gset('autopilot_emergency_stop', false);
+    Utils.gset('v337_restaurant_dig_removed', true);
   }
 
   // ==================== 控制面板 ====================
@@ -462,7 +449,6 @@
               <summary>餐厅子开关</summary>
               <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
               <div class="row sub"><label>⛽ 自动添油</label><span class="toggle ${Utils.gget('restaurant_oil', true) ? 'on' : 'off'}" data-sub="restaurant_oil">${Utils.gget('restaurant_oil', true) ? '开' : '关'}</span></div>
-              <div class="row sub"><label>📦 自动翻橱柜</label><span class="toggle ${Utils.gget('restaurant_dig', false) ? 'on' : 'off'}" data-sub="restaurant_dig">${Utils.gget('restaurant_dig', false) ? '开' : '关'}</span></div>
               <div class="row sub"><label>📬 餐厅后领取系统邮件</label><span class="toggle ${Utils.gget('restaurant_mailbox', true) ? 'on' : 'off'}" data-sub="restaurant_mailbox">${Utils.gget('restaurant_mailbox', true) ? '开' : '关'}</span></div>
             </details>
             <details open>
@@ -562,7 +548,6 @@
           } else if (sub) {
             const cur = t.classList.contains('on');
             Utils.gset(sub, !cur);
-            if (sub === 'restaurant_dig' && cur) Utils.gset('restaurant_dig_attempts', 0);
             if (sub === 'restaurant_cockroach' && cur) Utils.gset('restaurant_roach_attempts', 0);
             t.classList.toggle('on');
             t.classList.toggle('off');
@@ -1281,11 +1266,36 @@
     match: (p) => p === '/xz/restaurant' || /\/xz\/restaurant_\d+_\d+/.test(p),
     schedule: 'restaurant',
     MAX_ROACH_ATTEMPTS: 20,
-    MAX_DIG_ATTEMPTS: 120,
 
-    // 9.1 概览页：添油 + 扫感染楼层 → 导航去第一层
+    // 每页先处理直接显示的蟑螂；当前自家1楼就是 /xz/restaurant，而不是 restaurant_<uid>_1。
+    async killCurrentRoach() {
+      if (!Utils.gget('restaurant_cockroach', false)) return false;
+      const resultText = document.body.textContent || '';
+      const attempts = Utils.gget('restaurant_roach_attempts', 0);
+      if (/体力不足|打蟑螂失败|无法继续打/.test(resultText)) {
+        Utils.warn('餐厅: 打蟑螂已停止（体力不足或操作失败）');
+        Utils.gset('restaurant_cockroach', false);
+        return false;
+      }
+      if (attempts >= this.MAX_ROACH_ATTEMPTS) {
+        Utils.warn(`餐厅: 打蟑螂达到每轮 ${this.MAX_ROACH_ATTEMPTS} 次上限，自动关闭`);
+        Utils.gset('restaurant_cockroach', false);
+        return false;
+      }
+      const roachBtns = Array.from(document.querySelectorAll("a[onclick^='killCockroach']"));
+      if (roachBtns.length === 0) return false;
+      await Utils.sleep(Utils.randMs(1, 2));
+      Utils.gset('restaurant_roach_attempts', attempts + 1);
+      Utils.click(roachBtns[0]);
+      Utils.log(`餐厅: 清除当前楼层第一个蟑螂（本轮 ${attempts + 1}/${this.MAX_ROACH_ATTEMPTS}，本页共 ${roachBtns.length} 个）`);
+      return true;
+    },
+
+    // 9.1 概览页：添油 + 清当前1楼蟑螂 + 扫感染楼层 → 导航去第一层
     async processOverview() {
       if (await this.addOil()) return false;
+
+      if (await this.killCurrentRoach()) return false;
 
       if (!Utils.gget('restaurant_cockroach', false)) {
         Utils.log('餐厅: 蟑螂开关关，跳过楼层扫描');
@@ -1306,51 +1316,10 @@
       return (await this.navigateToFloor(first)) ? false : true;
     },
 
-    // 9.2 楼层页：打蟑 + 翻柜 + 跳下一感染楼层（或回概览）
+    // 9.2 楼层页：打蟑螂 + 跳下一感染楼层（或回概览）
     async processFloor() {
-      const resultText = document.body.textContent || '';
-      if (Utils.gget('restaurant_cockroach', false)) {
-        const attempts = Utils.gget('restaurant_roach_attempts', 0);
-        if (/体力不足|打蟑螂失败|无法继续打/.test(resultText)) {
-          Utils.warn('餐厅: 打蟑螂已停止（体力不足或操作失败）');
-          Utils.gset('restaurant_cockroach', false);
-        } else if (attempts >= this.MAX_ROACH_ATTEMPTS) {
-          Utils.warn(`餐厅: 打蟑螂达到每轮 ${this.MAX_ROACH_ATTEMPTS} 次上限，自动关闭`);
-          Utils.gset('restaurant_cockroach', false);
-        } else {
-          const roachBtns = Array.from(document.querySelectorAll("a[onclick^='killCockroach']"));
-          if (roachBtns.length > 0) {
-            await Utils.sleep(Utils.randMs(1, 2));
-            Utils.gset('restaurant_roach_attempts', attempts + 1);
-            Utils.click(roachBtns[0]);
-            Utils.log(`餐厅: 清除本页第一个蟑螂（本轮 ${attempts + 1}/${this.MAX_ROACH_ATTEMPTS}，本页共 ${roachBtns.length} 个）`);
-            return false;
-          }
-          Utils.log('餐厅: 当前楼层无蟑螂');
-        }
-      }
-      if (Utils.gget('restaurant_dig', false)) {
-        if (/体力不足|翻橱柜失败|无法继续翻/.test(resultText)) {
-          Utils.log('餐厅: 翻柜已停止（体力不足或操作失败）');
-          Utils.gset('restaurant_dig', false);
-        } else {
-          const attempts = Utils.gget('restaurant_dig_attempts', 0);
-          if (attempts >= this.MAX_DIG_ATTEMPTS) {
-            Utils.warn(`餐厅: 翻柜达到每轮 ${this.MAX_DIG_ATTEMPTS} 次上限，自动关闭翻柜`);
-            Utils.gset('restaurant_dig', false);
-          } else {
-            const digBtns = Array.from(document.querySelectorAll("a[onclick^='digOne']"));
-            if (digBtns.length > 0) {
-              const pick = digBtns[Math.floor(Math.random() * digBtns.length)];
-              await Utils.sleep(Utils.randMs(1, 2));
-              Utils.gset('restaurant_dig_attempts', attempts + 1);
-              Utils.click(pick);
-              Utils.log(`餐厅: 已翻柜（本轮 ${attempts + 1}/${this.MAX_DIG_ATTEMPTS}）`);
-              return false;
-            }
-          }
-        }
-      }
+      if (await this.killCurrentRoach()) return false;
+      Utils.log('餐厅: 当前楼层无蟑螂');
 
       const remaining = Utils.gget('restaurant_remaining_floors', []);
       if (remaining.length > 0) {
@@ -2657,11 +2626,9 @@
       Utils.warn(`调度器: ${phase.id}/${phase.state} 已超过 ${Math.round(maxAgeMs / 1000)} 秒，终止旧阶段并返回首页`);
       if (phase.module === 'restaurant') {
         Utils.gset('restaurant_cockroach', false);
-        Utils.gset('restaurant_dig', false);
         Utils.gset('restaurant_roach_attempts', 0);
-        Utils.gset('restaurant_dig_attempts', 0);
         Utils.gset('restaurant_remaining_floors', []);
-        Utils.warn('餐厅: 超时自救已关闭打蟑螂/翻柜；添油开关保持不变');
+        Utils.warn('餐厅: 超时自救已关闭打蟑螂；添油开关保持不变');
       }
       const returning = { state: 'returning', id: phase.id, module: phase.module };
       Utils.gset(PHASE_KEY, returning);
@@ -3007,7 +2974,6 @@
       });
       if (entry.module === 'restaurant') {
         Utils.gset('restaurant_roach_attempts', 0);
-        Utils.gset('restaurant_dig_attempts', 0);
       }
 
       const phase = Utils.gget(PHASE_KEY, null);
@@ -3147,7 +3113,6 @@
       }
       Utils.gset('autopilot_emergency_stop', false);
       Utils.gset('restaurant_roach_attempts', 0);
-      Utils.gset('restaurant_dig_attempts', 0);
       Utils.gset('autopilot_session', { id: Date.now(), iter: 0 });
       Utils.gset(this.stateKey, { enabled: true, stepIndex: 0, startedAt: Date.now() });
       Utils.log('▶▶ 自动计划启动');
@@ -3171,7 +3136,6 @@
       if (schedulerWasOn) Scheduler.stop(`单项运行 ${moduleId}`);
       Utils.gset('autopilot_emergency_stop', false);
       Utils.gset('restaurant_roach_attempts', 0);
-      Utils.gset('restaurant_dig_attempts', 0);
       Utils.gset('autopilot_session', { id: Date.now(), iter: 0 });
       Utils.gset(this.stateKey, {
         enabled: true,
