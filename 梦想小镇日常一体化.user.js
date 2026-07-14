@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.8
+// @name         梦想小镇日常一体化 v3.9
 // @namespace    http://tampermonkey.net/
-// @version      3.8
+// @version      3.9
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.9 变更（2026-07-14 餐厅安全修复）
+ * - 餐厅翻柜增加每轮 120 次硬上限；失败或超限会自动关闭翻柜子开关
+ * - 首次升级若正困在餐厅页，自动停止 AutoPilot 并关闭餐厅，确保立即脱困
+ *
  * v3.8 变更（2026-07-14 全功能实测修复）
  * - 餐厅翻柜恢复旧脚本“体力不足/翻柜失败即停止”退出条件，避免 digOne 无限刷新
  *
@@ -239,6 +243,18 @@
     if (Utils.gget(k, null) === null) Utils.gset(k, d);
   });
 
+  // v3.9 迁移救援：旧版本可能已在餐厅翻柜失败页形成完整刷新死循环
+  if (!Utils.gget('v39_restaurant_rescue_done', false) && location.pathname.startsWith('/xz/restaurant')) {
+    Utils.gset('v39_restaurant_rescue_done', true);
+    Utils.gset('mod_restaurant_enabled', false);
+    Utils.gset('restaurant_dig', false);
+    Utils.gset('restaurant_dig_attempts', 0);
+    Utils.gset('restaurant_remaining_floors', []);
+    Utils.gset('autopilot_state', { enabled: false });
+    Utils.gset('autopilot_session', null);
+    Utils.gset('autopilot_emergency_stop', false);
+  }
+
   // ==================== 控制面板 ====================
   const Panel = {
     create() {
@@ -268,7 +284,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.8</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.9</h3><div id="dxzxx-rows"></div>
         <details>
           <summary>餐厅子开关</summary>
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
@@ -339,6 +355,7 @@
           } else if (sub) {
             const cur = t.classList.contains('on');
             Utils.gset(sub, !cur);
+            if (sub === 'restaurant_dig' && cur) Utils.gset('restaurant_dig_attempts', 0);
             t.classList.toggle('on');
             t.classList.toggle('off');
             t.textContent = !cur ? '开' : '关';
@@ -428,14 +445,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.8 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.9 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 自动跑全套日常';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.8`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.9`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -1042,6 +1059,7 @@
   MOD.restaurant = {
     match: (p) => p === '/xz/restaurant' || /\/xz\/restaurant_\d+_\d+/.test(p),
     schedule: 'restaurant',
+    MAX_DIG_ATTEMPTS: 120,
 
     // 9.1 概览页：添油 + 扫感染楼层 → 导航去第一层
     async processOverview() {
@@ -1083,14 +1101,22 @@
         const resultText = document.body.textContent || '';
         if (/体力不足|翻橱柜失败|无法继续翻/.test(resultText)) {
           Utils.log('餐厅: 翻柜已停止（体力不足或操作失败）');
+          Utils.gset('restaurant_dig', false);
         } else {
-          const digBtns = Array.from(document.querySelectorAll("a[onclick^='digOne']"));
-          if (digBtns.length > 0) {
-            const pick = digBtns[Math.floor(Math.random() * digBtns.length)];
-            await Utils.sleep(Utils.randMs(1, 2));
-            Utils.click(pick);
-            Utils.log('餐厅: 已翻柜');
-            return false;
+          const attempts = Utils.gget('restaurant_dig_attempts', 0);
+          if (attempts >= this.MAX_DIG_ATTEMPTS) {
+            Utils.warn(`餐厅: 翻柜达到每轮 ${this.MAX_DIG_ATTEMPTS} 次上限，自动关闭翻柜`);
+            Utils.gset('restaurant_dig', false);
+          } else {
+            const digBtns = Array.from(document.querySelectorAll("a[onclick^='digOne']"));
+            if (digBtns.length > 0) {
+              const pick = digBtns[Math.floor(Math.random() * digBtns.length)];
+              await Utils.sleep(Utils.randMs(1, 2));
+              Utils.gset('restaurant_dig_attempts', attempts + 1);
+              Utils.click(pick);
+              Utils.log(`餐厅: 已翻柜（本轮 ${attempts + 1}/${this.MAX_DIG_ATTEMPTS}）`);
+              return false;
+            }
           }
         }
       }
@@ -2085,6 +2111,7 @@
         runMs: entry.runMs || 10000,
         beforeAt,
       });
+      if (entry.module === 'restaurant') Utils.gset('restaurant_dig_attempts', 0);
 
       const phase = Utils.gget(PHASE_KEY, null);
       if (!await this.navigatePhase(phase, location.pathname)) {
@@ -2196,6 +2223,7 @@
         Scheduler.stop('AutoPilot 启动');
       }
       Utils.gset('autopilot_emergency_stop', false);
+      Utils.gset('restaurant_dig_attempts', 0);
       Utils.gset('autopilot_session', { id: Date.now(), iter: 0 });
       Utils.gset(this.stateKey, { enabled: true, stepIndex: 0, startedAt: Date.now() });
       Utils.log('▶▶ 自动计划启动');

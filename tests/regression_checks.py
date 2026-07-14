@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.8 metadata", "// @version      3.8" in text and "日常一体化 v3.8" in text)
+require("v3.9 metadata", "// @version      3.9" in text and "日常一体化 v3.9" in text)
 
 coupon_ids = re.search(r"PROP_IDS:\s*\[([^\]]+)\]", text)
 require("food coupon whitelist exists", coupon_ids is not None)
@@ -53,6 +53,8 @@ require("facility schedule capped at 24h", "Math.min(remainingMs + offsetMs, 24 
 require("restaurant oil has independent switch", "restaurant_oil: true" in text and "restaurant_oil', true" in text)
 require("restaurant oil threshold restored", "if (cur < 11000)" in text)
 require("restaurant dig stops on insufficient energy", "/体力不足|翻橱柜失败|无法继续翻/" in text and "翻柜已停止" in text)
+require("restaurant dig has a hard cap", "MAX_DIG_ATTEMPTS: 120" in text and "restaurant_dig_attempts" in text)
+require("restaurant rescue disables stuck run", "v39_restaurant_rescue_done" in text and "Utils.gset('mod_restaurant_enabled', false);" in text)
 require("recipe default is off", text.count("recipe_target_level', 'off'") >= 2)
 require("recipe disables itself after scan", "Utils.gset('recipe_target_level', 'off');" in text)
 
