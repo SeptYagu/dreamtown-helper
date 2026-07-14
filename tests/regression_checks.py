@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.12 metadata", "// @version      3.12" in text and "日常一体化 v3.12" in text)
+require("v3.13 metadata", "// @version      3.13" in text and "日常一体化 v3.13" in text)
 
 coupon_ids = re.search(r"PROP_IDS:\s*\[([^\]]+)\]", text)
 require("food coupon whitelist exists", coupon_ids is not None)
@@ -64,6 +64,13 @@ require("restaurant v310 rescue disables both risky actions", "v310_restaurant_r
 require("recipe default is off", text.count("recipe_target_level', 'off'") >= 2)
 require("recipe disables itself after scan", "Utils.gset('recipe_target_level', 'off');" in text)
 require("recipe syncs disabled target to panel", "if (levelSelect) levelSelect.value = 'off';" in text)
+require("recipe maps current middle tier to legacy target", "'特色': 1, '中品': 1" in text)
+require("recipe parses plain-text detail level", "食谱等级[:：]\\s*(金牌(?:\\d+级)?|极品|上品|中品|特色|普通)" in text)
+detail_start = text.index("async processDetail()")
+detail_end = text.index("// 找普通升级按钮", detail_start)
+detail = text[detail_start:detail_end]
+require("recipe checks target before upgrade button", "currentLevel >= targetLevel" in detail and detail.index("currentLevel >= targetLevel") < detail.index("findNormalUpgradeButton"))
+require("recipe fails closed when level is unknown", "currentLevel === undefined || targetLevel === undefined" in detail and "等级解析失败，已跳过" in detail)
 
 require("scheduler persists fixed plans", "Utils.gset(`sched_${e.id}_nextAt`, e.nextRunAt);" in text)
 require("scheduler start does not call missing init", "this.init();" not in text)

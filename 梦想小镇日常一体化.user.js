@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.12
+// @name         梦想小镇日常一体化 v3.13
 // @namespace    http://tampermonkey.net/
-// @version      3.12
+// @version      3.13
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.13 变更（2026-07-14 食谱目标等级修复）
+ * - 恢复详情页当前等级解析，达到目标立即返回列表，不再升级到材料不足
+ * - 兼容当前站点“中品”等级名称（与旧配置“特色”同级），解析失败时安全停止
+ *
  * v3.12 变更（2026-07-14 市场活动领取）
  * - 市场出现周二日常活动时，先领取免费食材预定券，再刷新续跑采购
  * - 非计划模块明确返回 false 时不提前写完成标志，保证调度器跨刷新续跑
@@ -308,7 +312,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.12</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.13</h3><div id="dxzxx-rows"></div>
         <details>
           <summary>餐厅子开关</summary>
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
@@ -320,7 +324,7 @@
           <div class="label">目标等级</div>
           <select id="dxzxx-recipe-level">
             <option value="off">关闭升级</option>
-            <option value="特色">升级到特色</option>
+            <option value="特色">升级到中品（原特色）</option>
             <option value="上品">升级到上品</option>
             <option value="极品">升级到极品</option>
             <option value="金牌">升级到金牌</option>
@@ -470,14 +474,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.12 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.13 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 自动跑全套日常';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.12`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.13`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -1349,7 +1353,7 @@
 
     // 等级映射：旧脚本 v4.0 完整保留
     LEVEL_MAP: {
-      '普通': 0, '特色': 1, '上品': 2, '极品': 3, '金牌': 4,
+      '普通': 0, '特色': 1, '中品': 1, '上品': 2, '极品': 3, '金牌': 4,
       '金牌1级': 4, '金牌2级': 5, '金牌3级': 6, '金牌4级': 7, '金牌5级': 8,
       '金牌6级': 9, '金牌7级': 10, '金牌8级': 11, '金牌9级': 12, '金牌10级': 13,
     },
@@ -1459,6 +1463,17 @@
       }) || null;
     },
 
+    // 获取详情页当前等级；当前站点是纯文本“食谱等级：中品”，旧页面可能把等级包在 span 内
+    getCurrentLevel() {
+      const levelPara = Array.from(document.querySelectorAll('p')).find(p =>
+        /食谱等级[:：]/.test(p.textContent || '')
+      );
+      if (!levelPara) return null;
+      const levelText = (levelPara.textContent || '').replace(/\s+/g, ' ').trim();
+      const match = levelText.match(/食谱等级[:：]\s*(金牌(?:\d+级)?|极品|上品|中品|特色|普通)/);
+      return match ? match[1] : null;
+    },
+
     // 12.2 详情页（cook_<id>）
     async processDetail() {
       const cfg = this.getConfig();
@@ -1478,6 +1493,20 @@
           Utils.log('食谱: 已点学习');
           return false;
         }
+      }
+
+      // 每次刷新都重新读取当前等级；达到目标必须立即返回，绝不能继续消耗食材
+      const currentLevelText = this.getCurrentLevel();
+      const currentLevel = currentLevelText == null ? undefined : this.LEVEL_MAP[currentLevelText];
+      const targetLevel = this.LEVEL_MAP[cfg.targetLevel];
+      if (currentLevel === undefined || targetLevel === undefined) {
+        Utils.warn(`食谱: 无法解析等级（当前=${currentLevelText || '未知'}，目标=${cfg.targetLevel}），安全停止当前详情`);
+        Utils.showStatus('食谱', '等级解析失败，已跳过');
+        return this.returnToList() ? false : true;
+      }
+      if (currentLevel >= targetLevel) {
+        Utils.log(`食谱: 当前${currentLevelText}已达到目标${cfg.targetLevel}，返回列表`);
+        return this.returnToList() ? false : true;
       }
 
       // 12.2.2 升级按钮（仅普通食材升级，不点万能食材）
