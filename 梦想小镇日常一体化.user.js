@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.27
+// @name         梦想小镇日常一体化 v3.28
 // @namespace    http://tampermonkey.net/
-// @version      3.27
+// @version      3.28
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -180,7 +180,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.27';
+  const SCRIPT_VERSION = '3.28';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -394,27 +394,34 @@
     create() {
       if (document.getElementById('dxzxx-panel')) return;
       GM_addStyle(`
-        #dxzxx-panel{position:fixed;top:10px;right:10px;z-index:99999;background:rgba(255,255,255,.97);border:1px solid #ccc;border-radius:8px;padding:10px;box-shadow:0 4px 16px rgba(0,0,0,.15);font-size:12px;width:260px;font-family:Arial,sans-serif;max-height:90vh;overflow-y:auto;}
-        #dxzxx-panel h3{margin:0 0 8px;font-size:14px;border-bottom:1px solid #eee;padding-bottom:6px;color:#333;}
-        #dxzxx-panel .row{display:flex;justify-content:space-between;align-items:center;padding:3px 0;}
+        #dxzxx-panel{position:fixed;top:10px;right:10px;z-index:99999;background:rgba(255,255,255,.97);border:1px solid #ccc;border-radius:8px;padding:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);font-size:11px;width:560px;box-sizing:border-box;font-family:Arial,sans-serif;max-height:calc(100vh - 20px);overflow-y:auto;}
+        #dxzxx-panel h3{margin:0 0 4px;font-size:14px;border-bottom:1px solid #eee;padding-bottom:4px;color:#333;}
+        #dxzxx-panel .row{display:flex;justify-content:space-between;align-items:center;gap:4px;padding:2px 0;min-width:0;}
         #dxzxx-panel .row label{cursor:pointer;flex:1;}
-        #dxzxx-panel .toggle{padding:2px 8px;border-radius:10px;font-size:11px;cursor:pointer;user-select:none;border:1px solid transparent;}
+        #dxzxx-panel .toggle{padding:1px 6px;border-radius:10px;font-size:10px;cursor:pointer;user-select:none;border:1px solid transparent;flex:0 0 auto;}
         #dxzxx-panel .toggle.on{background:#d4f7d4;color:#1a7a1a;border-color:#1a7a1a;}
         #dxzxx-panel .toggle.off{background:#f7d4d4;color:#a71a1a;border-color:#a71a1a;}
-        #dxzxx-panel button{width:100%;padding:6px;margin-top:6px;border:none;border-radius:4px;cursor:pointer;font-weight:bold;}
+        #dxzxx-panel button{width:100%;padding:5px;margin-top:4px;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px;}
         #dxzxx-panel .run-btn{background:#4CAF50;color:white;}
         #dxzxx-panel .hide-btn{background:#eee;color:#666;margin-top:4px;}
-        #dxzxx-panel .sub{padding-left:14px;font-size:11px;color:#666;}
-        #dxzxx-panel details{margin-top:8px;padding-top:6px;border-top:1px solid #eee;}
+        #dxzxx-panel .sub{padding-left:8px;font-size:10px;color:#666;}
+        #dxzxx-panel details{margin-top:4px;padding-top:3px;border-top:1px solid #eee;}
         #dxzxx-panel summary{cursor:pointer;font-weight:bold;}
-        #dxzxx-panel select{width:100%;padding:4px;margin:4px 0;border:1px solid #ccc;border-radius:4px;font-size:12px;}
-        #dxzxx-panel .project-count{width:48px;padding:2px 3px;border:1px solid #bbb;border-radius:3px;font-size:11px;text-align:center;margin:0 5px;}
-        #dxzxx-panel .project-row label{font-size:11px;line-height:1.25;}
-        #dxzxx-panel .label{font-size:11px;color:#555;margin-top:4px;}
-        #dxzxx-panel .plan-list{font-size:11px;color:#333;padding:6px 4px;line-height:1.6;max-height:200px;overflow-y:auto;background:#f9f9f9;border-radius:4px;margin-top:4px;}
-        #dxzxx-panel .plan-list .step{display:flex;justify-content:space-between;padding:1px 4px;}
+        #dxzxx-panel select{width:100%;padding:3px;margin:3px 0;border:1px solid #ccc;border-radius:4px;font-size:11px;}
+        #dxzxx-panel .project-count{width:40px;padding:1px 2px;border:1px solid #bbb;border-radius:3px;font-size:10px;text-align:center;margin:0 2px;}
+        #dxzxx-panel .project-row label{font-size:10px;line-height:1.15;}
+        #dxzxx-panel .label{font-size:10px;color:#555;margin-top:2px;}
+        #dxzxx-rows,#dxzxx-project-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:14px;}
+        #dxzxx-panel .panel-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start;}
+        #dxzxx-panel .panel-column{min-width:0;}
+        #dxzxx-panel .panel-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 6px;}
+        #dxzxx-panel .plan-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:6px;font-size:10px;color:#333;padding:3px;line-height:1.25;max-height:112px;overflow-y:auto;background:#f9f9f9;border-radius:4px;margin-top:3px;}
+        #dxzxx-panel .plan-list .step{display:flex;justify-content:space-between;padding:1px 3px;min-width:0;}
         #dxzxx-panel .plan-list .step.current{background:#FFE082;font-weight:bold;border-radius:3px;}
         #dxzxx-panel .plan-list .step.disabled{color:#aaa;text-decoration:line-through;}
+        #dxzxx-sched-status{max-height:92px;overflow-y:auto;}
+        #dxzxx-sched-list{display:none;}
+        @media (max-width:620px){#dxzxx-panel{left:10px;right:10px;width:auto;}#dxzxx-panel .panel-columns,#dxzxx-rows,#dxzxx-project-rows{grid-template-columns:1fr;}}
         #dxzxx-fab{position:fixed;top:10px;right:10px;z-index:99999;background:#4fe;color:#000;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:bold;box-shadow:0 2px 8px rgba(0,0,0,.2);font-size:16px;}
       `);
 
@@ -426,45 +433,55 @@
           <div id="dxzxx-project-rows"></div>
           <div class="label">按服务器06:00重置；次数按成功动作记账。搬家不执行。</div>
         </details>
-        <details>
-          <summary>餐厅子开关</summary>
-          <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
-          <div class="row sub"><label>⛽ 自动添油</label><span class="toggle ${Utils.gget('restaurant_oil', true) ? 'on' : 'off'}" data-sub="restaurant_oil">${Utils.gget('restaurant_oil', true) ? '开' : '关'}</span></div>
-          <div class="row sub"><label>📦 自动翻橱柜</label><span class="toggle ${Utils.gget('restaurant_dig', false) ? 'on' : 'off'}" data-sub="restaurant_dig">${Utils.gget('restaurant_dig', false) ? '开' : '关'}</span></div>
-          <div class="row sub"><label>📬 餐厅后领取系统邮件</label><span class="toggle ${Utils.gget('restaurant_mailbox', true) ? 'on' : 'off'}" data-sub="restaurant_mailbox">${Utils.gget('restaurant_mailbox', true) ? '开' : '关'}</span></div>
-        </details>
-        <details>
-          <summary>食谱升级配置</summary>
-          <div class="label">目标等级</div>
-          <select id="dxzxx-recipe-level">
-            <option value="off">关闭升级</option>
-            <option value="中品">升级到中品</option>
-            <option value="上品">升级到上品</option>
-            <option value="极品">升级到极品</option>
-            <option value="金牌">升级到金牌</option>
-            <option value="金牌2级">升级到金牌2级</option>
-            <option value="金牌3级">升级到金牌3级</option>
-            <option value="金牌4级">升级到金牌4级</option>
-            <option value="金牌5级">升级到金牌5级</option>
-          </select>
-          <div class="row sub"><label>📖 自动学习新食谱</label><span class="toggle ${Utils.gget('recipe_learn', true) ? 'on' : 'off'}" data-sub="recipe_learn">${Utils.gget('recipe_learn', true) ? '开' : '关'}</span></div>
-        </details>
-        <details>
-          <summary>自动驾驶流程（${AutoPilot.PLAN.length} 步）</summary>
-          <div id="dxzxx-plan-list" class="plan-list"></div>
-        </details>
-        <button class="run-btn" id="dxzxx-run">▶ 立即执行本页</button>
-        <button class="run-btn" id="dxzxx-autopilot" style="background:#FF9800;color:#000;">🚀 立即跑一轮全套</button>
-        <button class="run-btn" id="dxzxx-stop" style="background:#f44;color:#fff;display:none;">⏹ 立即停止（Esc）</button>
-        <details id="dxzxx-sched-wrap" style="margin-top:6px;">
-          <summary style="cursor:pointer;color:#fff;font-size:13px;padding:6px;background:rgba(255,152,0,0.25);border-radius:4px;">⏰ 长期循环调度器</summary>
-          <div style="padding:6px;background:rgba(0,0,0,0.15);border-radius:4px;margin-top:4px;">
-            <div id="dxzxx-sched-status" style="font-size:12px;color:#fff;margin-bottom:6px;line-height:1.5;">⏸ 未启动</div>
-            <div id="dxzxx-sched-list" style="font-size:11px;color:#aaa;margin-bottom:6px;max-height:140px;overflow-y:auto;"></div>
-            <button class="run-btn" id="dxzxx-sched" style="background:#FF9800;color:#000;">⏰ 启动调度器</button>
-            <button class="run-btn" id="dxzxx-sched-refresh" style="background:#666;color:#fff;font-size:11px;padding:4px 8px;">🔄 立即重算</button>
+        <div class="panel-columns">
+          <div class="panel-column">
+            <details open>
+              <summary>餐厅子开关</summary>
+              <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
+              <div class="row sub"><label>⛽ 自动添油</label><span class="toggle ${Utils.gget('restaurant_oil', true) ? 'on' : 'off'}" data-sub="restaurant_oil">${Utils.gget('restaurant_oil', true) ? '开' : '关'}</span></div>
+              <div class="row sub"><label>📦 自动翻橱柜</label><span class="toggle ${Utils.gget('restaurant_dig', false) ? 'on' : 'off'}" data-sub="restaurant_dig">${Utils.gget('restaurant_dig', false) ? '开' : '关'}</span></div>
+              <div class="row sub"><label>📬 餐厅后领取系统邮件</label><span class="toggle ${Utils.gget('restaurant_mailbox', true) ? 'on' : 'off'}" data-sub="restaurant_mailbox">${Utils.gget('restaurant_mailbox', true) ? '开' : '关'}</span></div>
+            </details>
+            <details open>
+              <summary>食谱升级配置</summary>
+              <div class="label">目标等级</div>
+              <select id="dxzxx-recipe-level">
+                <option value="off">关闭升级</option>
+                <option value="中品">升级到中品</option>
+                <option value="上品">升级到上品</option>
+                <option value="极品">升级到极品</option>
+                <option value="金牌">升级到金牌</option>
+                <option value="金牌2级">升级到金牌2级</option>
+                <option value="金牌3级">升级到金牌3级</option>
+                <option value="金牌4级">升级到金牌4级</option>
+                <option value="金牌5级">升级到金牌5级</option>
+              </select>
+              <div class="row sub"><label>📖 自动学习新食谱</label><span class="toggle ${Utils.gget('recipe_learn', true) ? 'on' : 'off'}" data-sub="recipe_learn">${Utils.gget('recipe_learn', true) ? '开' : '关'}</span></div>
+            </details>
+            <div class="panel-actions">
+              <button class="run-btn" id="dxzxx-run">▶ 立即执行本页</button>
+              <button class="run-btn" id="dxzxx-autopilot" style="background:#FF9800;color:#000;">🚀 立即跑一轮全套</button>
+              <button class="run-btn" id="dxzxx-stop" style="background:#f44;color:#fff;display:none;">⏹ 立即停止（Esc）</button>
+            </div>
           </div>
-        </details>
+          <div class="panel-column">
+            <details open>
+              <summary>自动驾驶流程（${AutoPilot.PLAN.length} 步）</summary>
+              <div id="dxzxx-plan-list" class="plan-list"></div>
+            </details>
+            <details open id="dxzxx-sched-wrap">
+              <summary style="cursor:pointer;color:#fff;font-size:12px;padding:4px;background:rgba(255,152,0,0.25);border-radius:4px;">⏰ 长期循环调度器</summary>
+              <div style="padding:4px;background:rgba(0,0,0,0.15);border-radius:4px;margin-top:3px;">
+                <div id="dxzxx-sched-status" style="font-size:10px;color:#fff;margin-bottom:3px;line-height:1.3;">⏸ 未启动</div>
+                <div id="dxzxx-sched-list"></div>
+                <div class="panel-actions">
+                  <button class="run-btn" id="dxzxx-sched" style="background:#FF9800;color:#000;">⏰ 启动调度器</button>
+                  <button class="run-btn" id="dxzxx-sched-refresh" style="background:#666;color:#fff;">🔄 立即重算</button>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
         <button class="hide-btn" id="dxzxx-hide">收起</button>`;
       document.body.appendChild(panel);
 
