@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.23 metadata and shared panel version", "// @version      3.23" in text and "const SCRIPT_VERSION = '3.23';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.24 metadata and shared panel version", "// @version      3.24" in text and "const SCRIPT_VERSION = '3.24';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel has no stale hardcoded title", "梦想小镇日常 v3.18" not in text and "梦想小镇日常 v3.20" not in text)
 require("server time accepts current and legacy labels", "/(?:驯鹿|家园)报时[：:]/" in text)
 require("server clock advances from static page sample", "_serverClockCapturedAt" in text and "localNow - this._serverClockCapturedAt" in text)
@@ -109,6 +109,13 @@ require("recipe scan skips blocked items", "scanStateKey: 'recipe_scan_state'" i
 require("recipe continues after insufficient materials", "材料或条件不足" in text and "继续扫描其它菜品" in text)
 require("recipe clears scan state only after all pages", "食谱: 当前列表已扫完" in text and "Utils.gset(this.scanStateKey, null);" in text)
 require("recipe target change resets scan state", "Utils.gset('recipe_scan_state', null);" in text)
+require("recipe scans only the upgradable category", "pageInfo.category !== 3" in text and "findUpgradableCategoryLink" in text)
+require("recipe persists the exact filtered list page", "scanState.listPath = location.pathname;" in text and "scanState.street = pageInfo.street;" in text)
+require("recipe pagination stays in dynamic street category 3", "new RegExp(`^/xz/cookbook_${street}_3_\\\\d+$`)" in text)
+return_start = text.index("    returnToList() {")
+return_end = text.index("// ----- 12. 守护者", return_start)
+recipe_return = text[return_start:return_end]
+require("recipe returns through history instead of arbitrary cookbook link", "history.back()" in recipe_return and "/\\/xz\\/cookbook_/" not in recipe_return)
 
 require("scheduler persists fixed plans", "Utils.gset(`sched_${e.id}_nextAt`, e.nextRunAt);" in text)
 require("scheduler preserves overdue fixed plans", "e.nextRunAt = saved > 0 ? saved : this.computeFixedNext(e, nowMs);" in text)

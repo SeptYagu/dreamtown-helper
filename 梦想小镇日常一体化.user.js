@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.23
+// @name         梦想小镇日常一体化 v3.24
 // @namespace    http://tampermonkey.net/
-// @version      3.23
+// @version      3.24
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.24 变更（2026-07-14 食谱可升级分类修复）
+ * - 食谱只在动态街道的 cookbook_<街道>_3_<页码>“可升级”分类扫描与翻页
+ * - 详情页保存并返回原可升级分页，禁止误入 cookbook_<街道>_0_<页码>“全部”分类
+ *
  * v3.23 变更（2026-07-14 食谱全量升级扫描）
  * - 材料不足或条件不满足的食谱仅在本轮跳过，继续升级其它符合目标的菜品
  * - 扫描全部分页并处理完所有可行项后才关闭目标，避免单个受阻食谱反复进入
@@ -168,7 +172,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.23';
+  const SCRIPT_VERSION = '3.24';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -1503,6 +1507,20 @@
       return state;
     },
 
+    parseCookbookPath(path = location.pathname) {
+      const match = path.match(/^\/xz\/cookbook_(\d+)_(\d+)_(\d+)$/);
+      return match ? { street: Number(match[1]), category: Number(match[2]), page: Number(match[3]) } : null;
+    },
+
+    findUpgradableCategoryLink(street = null) {
+      return Array.from(document.querySelectorAll('a')).find(a => {
+        const text = (a.textContent || '').trim();
+        const href = a.getAttribute('href') || '';
+        const match = href.match(/^\/xz\/cookbook_(\d+)_3_1$/);
+        return text === '可升级' && match && (street == null || Number(match[1]) === street);
+      }) || null;
+    },
+
     blockCurrentItem(reason) {
       const cfg = this.getConfig();
       const state = this.loadScanState(cfg.targetLevel);
@@ -1540,6 +1558,26 @@
       }
       const targetValue = this.LEVEL_MAP[cfg.targetLevel] ?? 4;
       const scanState = this.loadScanState(cfg.targetLevel);
+      const pageInfo = this.parseCookbookPath();
+
+      // 旧v4.0脚本只匹配 cookbook_*_3_*。“全部”(分类0)只能用于展示，
+      // 不能据此判断可实际升级；若意外落入其它分类，必须点击页面真实“可升级”入口纠正。
+      if (!pageInfo || pageInfo.category !== 3) {
+        const upgradableLink = this.findUpgradableCategoryLink(pageInfo?.street ?? scanState.street ?? null);
+        if (upgradableLink) {
+          Utils.log('食谱: 当前不是可升级分类，切回页面真实“可升级”入口');
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(upgradableLink);
+          return false;
+        }
+        Utils.warn('食谱: 当前不是可升级分类，且找不到真实“可升级”入口');
+        return false;
+      }
+
+      // 详情页结束后必须回到本街道、分类3、原页码，不能取任意 cookbook_* 链接。
+      scanState.street = pageInfo.street;
+      scanState.listPath = location.pathname;
+      Utils.gset(this.scanStateKey, scanState);
 
       // 12.1.1 找"可升级"项：旧选择器（.gen_background_blue.s_room.s_font → p 含 .gen_grey + .gen_red 含"可升级"）
       const upgradeItem = this.findUpgradeItem(targetValue, scanState.blocked);
@@ -1551,7 +1589,7 @@
       }
 
       // 当前页处理完 → 翻页（不从列表猜测“未学习项”）
-      const nextPage = this.findNextPage();
+      const nextPage = this.findNextPage(pageInfo.street);
       if (nextPage) {
         Utils.log('食谱: 翻到下一页');
         await Utils.sleep(Utils.randMs(1, 2));
@@ -1605,10 +1643,12 @@
     },
 
     // 找下一页
-    findNextPage() {
+    findNextPage(street) {
       return Array.from(document.querySelectorAll('a')).find(a => {
         const t = (a.textContent || '').trim();
-        return t === '下一页' || t === '下一頁' || t === '>>' || t === 'Next';
+        const href = a.getAttribute('href') || '';
+        const sameUpgradableCategory = new RegExp(`^/xz/cookbook_${street}_3_\\d+$`).test(href);
+        return sameUpgradableCategory && (t === '下一页' || t === '下一頁' || t === '>>' || t === 'Next');
       }) || null;
     },
 
@@ -1747,17 +1787,24 @@
 
     // 返回食谱列表
     returnToList() {
-      const back = Array.from(document.querySelectorAll('a')).find(a => {
-        const t = (a.textContent || '').trim();
-        const h = a.getAttribute('href') || '';
-        return t === '返回食谱' || t === '返回前页' || t === '返回' ||
-               /\/xz\/cookbook_/.test(h) || t === '<<' || t === 'Back';
-      });
+      const cfg = this.getConfig();
+      const state = this.loadScanState(cfg.targetLevel);
+      const listPath = state.listPath;
+      const back = listPath ? Array.from(document.querySelectorAll('a')).find(a =>
+        (a.getAttribute('href') || '') === listPath
+      ) : null;
       if (back) {
         Utils.sleep(Utils.randMs(1, 2)).then(() => Utils.click(back));
         return true;
       }
-      Utils.warn('食谱: 找不到返回列表链接');
+      // 参考旧v4.0：详情页普通“返回食谱”会落入分类0，不能点击；
+      // 使用浏览器历史返回进入详情前保存的分类3原分页。
+      if (history.length > 1) {
+        Utils.log(`食谱: 返回原可升级分页 ${listPath || '（浏览器历史）'}`);
+        Utils.sleep(Utils.randMs(1, 2)).then(() => history.back());
+        return true;
+      }
+      Utils.warn('食谱: 无法返回原可升级分页');
       return false;
     },
   };
