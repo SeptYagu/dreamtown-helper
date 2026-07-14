@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.29
+// @name         梦想小镇日常一体化 v3.30
 // @namespace    http://tampermonkey.net/
-// @version      3.29
+// @version      3.30
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -180,7 +180,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.29';
+  const SCRIPT_VERSION = '3.30';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -396,7 +396,7 @@
       GM_addStyle(`
         #dxzxx-panel{position:fixed;top:10px;right:10px;z-index:99999;background:rgba(255,255,255,.97);border:1px solid #ccc;border-radius:8px;padding:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);font-size:11px;line-height:1.25;width:560px;box-sizing:border-box;font-family:Arial,sans-serif;max-height:calc(100vh - 20px);overflow-y:auto;}
         #dxzxx-panel h3{margin:0 0 4px;font-size:14px;line-height:1.2;border-bottom:1px solid #eee;padding-bottom:4px;color:#333;}
-        #dxzxx-panel .row{display:flex;justify-content:space-between;align-items:center;gap:4px;padding:2px 0;min-width:0;font-size:11px;line-height:1.2;}
+        #dxzxx-panel .row{display:flex;justify-content:space-between;align-items:center;gap:4px;padding:0;min-width:0;font-size:11px;line-height:1.2;}
         #dxzxx-panel .row label{cursor:pointer;flex:1;}
         #dxzxx-panel .toggle{padding:1px 6px;border-radius:10px;font-size:10px;cursor:pointer;user-select:none;border:1px solid transparent;flex:0 0 auto;}
         #dxzxx-panel .toggle.on{background:#d4f7d4;color:#1a7a1a;border-color:#1a7a1a;}
@@ -405,7 +405,7 @@
         #dxzxx-panel .run-btn{background:#4CAF50;color:white;}
         #dxzxx-panel .hide-btn{background:#eee;color:#666;margin-top:4px;}
         #dxzxx-panel .sub{padding-left:8px;font-size:10px;color:#666;}
-        #dxzxx-panel details{margin-top:4px;padding-top:3px;border-top:1px solid #eee;font-size:11px;line-height:1.25;}
+        #dxzxx-panel details{margin-top:2px;padding-top:2px;border-top:1px solid #eee;font-size:11px;line-height:1.25;}
         #dxzxx-panel summary{cursor:pointer;font-weight:bold;line-height:1.25;}
         #dxzxx-panel select{width:100%;padding:3px;margin:3px 0;border:1px solid #ccc;border-radius:4px;font-size:11px;}
         #dxzxx-panel .project-count{width:40px;padding:1px 2px;border:1px solid #bbb;border-radius:3px;font-size:10px;text-align:center;margin:0 2px;}
@@ -415,11 +415,12 @@
         #dxzxx-panel .panel-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start;}
         #dxzxx-panel .panel-column{min-width:0;}
         #dxzxx-panel .panel-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 6px;}
-        #dxzxx-panel .plan-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:6px;font-size:10px;color:#333;padding:3px;line-height:1.25;max-height:112px;overflow-y:auto;background:#f9f9f9;border-radius:4px;margin-top:3px;}
+        #dxzxx-panel .plan-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:6px;font-size:9px;color:#333;padding:3px;line-height:1.2;max-height:72px;overflow-y:auto;background:#f9f9f9;border-radius:4px;margin-top:2px;}
         #dxzxx-panel .plan-list .step{display:flex;justify-content:space-between;padding:1px 3px;min-width:0;}
         #dxzxx-panel .plan-list .step.current{background:#FFE082;font-weight:bold;border-radius:3px;}
         #dxzxx-panel .plan-list .step.disabled{color:#aaa;text-decoration:line-through;}
-        #dxzxx-sched-status{max-height:92px;overflow-y:auto;}
+        #dxzxx-sched-wrap>div{line-height:1.25;}
+        #dxzxx-sched-status{max-height:54px;overflow-y:auto;}
         #dxzxx-sched-list{display:none;}
         @media (max-width:620px){#dxzxx-panel{left:10px;right:10px;width:auto;}#dxzxx-panel .panel-columns,#dxzxx-rows,#dxzxx-project-rows{grid-template-columns:1fr;}}
         #dxzxx-fab{position:fixed;top:10px;right:10px;z-index:99999;background:#4fe;color:#000;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:bold;box-shadow:0 2px 8px rgba(0,0,0,.2);font-size:16px;}
