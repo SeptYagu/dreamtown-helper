@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.11
+// @name         梦想小镇日常一体化 v3.12
 // @namespace    http://tampermonkey.net/
-// @version      3.11
+// @version      3.12
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.12 变更（2026-07-14 市场活动领取）
+ * - 市场出现周二日常活动时，先领取免费食材预定券，再刷新续跑采购
+ * - 非计划模块明确返回 false 时不提前写完成标志，保证调度器跨刷新续跑
+ *
  * v3.11 变更（2026-07-14 全功能实测修复）
  * - 删除旧市场脚本从未包含的“每日菜场”自动购买，避免完整刷新后重复购买第一行
  * - 食谱扫描完成关闭目标等级时，同步刷新面板下拉框
@@ -304,7 +308,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.11</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.12</h3><div id="dxzxx-rows"></div>
         <details>
           <summary>餐厅子开关</summary>
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
@@ -466,14 +470,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.11 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.12 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 自动跑全套日常';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.11`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.12`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -802,6 +806,15 @@
     },
 
     async run() {
+      // 周二日常活动：免费领取食材预定券；领取会刷新页面，下一页再继续采购
+      const reserveClaim = document.querySelector("a[onclick^='getEverydayReserve']");
+      if (reserveClaim) {
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(reserveClaim);
+        Utils.log('市场: 已领取周二日常食材预定券');
+        return false;
+      }
+
       // 6.0 冷却检查
       const cooldownUntil = Utils.gget('market_cooldown_until', 0);
       if (cooldownUntil > Date.now()) {
@@ -2420,7 +2433,7 @@
             Utils.log(`▶ ${key} 模块触发`);
             try {
               const completed = await mod.run();
-              if (completed === true || !inPlan) {
+              if (completed === true || (!inPlan && completed !== false)) {
                 Utils.gset(`mod_${key}_done`, Date.now());
                 Utils.log(`✓ ${key} 完成标志已写入`);
               } else {

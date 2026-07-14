@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.11 metadata", "// @version      3.11" in text and "日常一体化 v3.11" in text)
+require("v3.12 metadata", "// @version      3.12" in text and "日常一体化 v3.12" in text)
 
 coupon_ids = re.search(r"PROP_IDS:\s*\[([^\]]+)\]", text)
 require("food coupon whitelist exists", coupon_ids is not None)
@@ -49,6 +49,9 @@ require("egg action returns in-progress", "扭蛋: 已扭" in text and "return f
 require("market discount is exactly 666", "DISCOUNT_PRICE: 666" in text and "price === this.CONFIG.DISCOUNT_PRICE" in text)
 require("market discount dedupes by server hour", "market_last_discount_hour" in text)
 require("market does not buy daily market rows", "buyDayFood" not in text and "DAY_LEVEL1_MAX" not in text and "DAY_LEVEL2_MAX" not in text)
+require("market claims Tuesday reserve coupon first", "a[onclick^='getEverydayReserve']" in text and "已领取周二日常食材预定券" in text)
+require("market claim remains in progress across refresh", "Utils.click(reserveClaim);" in text and "return false;" in text)
+require("router respects explicit in-progress result", "(!inPlan && completed !== false)" in text)
 require("facility threshold restored to 5", "MIN_COUNT: 5" in text)
 require("facility schedule capped at 24h", "Math.min(remainingMs + offsetMs, 24 * 3600000)" in text)
 require("restaurant oil has independent switch", "restaurant_oil: true" in text and "restaurant_oil', true" in text)
