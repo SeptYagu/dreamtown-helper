@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.24
+// @name         梦想小镇日常一体化 v3.25
 // @namespace    http://tampermonkey.net/
-// @version      3.24
+// @version      3.25
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.25 变更（2026-07-14 食谱长期目标与轮次分离）
+ * - 食谱扫描完成后保留面板目标等级，仅结束当前轮次
+ * - Scheduler每24小时及AutoPilot每轮到达食谱前自动开启全新扫描轮次
+ *
  * v3.24 变更（2026-07-14 食谱可升级分类修复）
  * - 食谱只在动态街道的 cookbook_<街道>_3_<页码>“可升级”分类扫描与翻页
  * - 详情页保存并返回原可升级分页，禁止误入 cookbook_<街道>_0_<页码>“全部”分类
@@ -172,7 +176,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.24';
+  const SCRIPT_VERSION = '3.25';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -527,7 +531,13 @@
         recipeLevel.value = cur;
         recipeLevel.addEventListener('change', () => {
           Utils.gset('recipe_target_level', recipeLevel.value);
-          Utils.gset('recipe_scan_state', null);
+          Utils.gset('recipe_scan_state', recipeLevel.value === 'off' ? null : {
+            targetLevel: recipeLevel.value,
+            blocked: [],
+            active: true,
+            source: 'manual',
+            startedAt: Date.now(),
+          });
           Utils.showStatus('食谱', `目标等级 → ${recipeLevel.value}`, '#4CAF50');
         });
       }
@@ -1500,11 +1510,30 @@
     loadScanState(targetLevel) {
       let state = Utils.gget(this.scanStateKey, null);
       if (!state || state.targetLevel !== targetLevel) {
-        state = { targetLevel, blocked: [], startedAt: Date.now() };
+        state = { targetLevel, blocked: [], active: false, startedAt: 0 };
         Utils.gset(this.scanStateKey, state);
       }
       state.blocked ||= [];
+      state.active = state.active === true;
       return state;
+    },
+
+    startScan(source) {
+      const { targetLevel } = this.getConfig();
+      if (targetLevel === 'off') {
+        Utils.gset(this.scanStateKey, null);
+        Utils.log(`食谱: ${source}触发，但长期目标为关闭`);
+        return false;
+      }
+      Utils.gset(this.scanStateKey, {
+        targetLevel,
+        blocked: [],
+        active: true,
+        source,
+        startedAt: Date.now(),
+      });
+      Utils.log(`食谱: ${source}开启新一轮扫描（长期目标=${targetLevel}）`);
+      return true;
     },
 
     parseCookbookPath(path = location.pathname) {
@@ -1533,6 +1562,16 @@
     // 主入口
     async run() {
       const path = location.pathname;
+      const cfg = this.getConfig();
+      if (cfg.targetLevel === 'off') {
+        Utils.log('食谱: 长期目标为关闭，不自动扫描/学习');
+        return true;
+      }
+      const scanState = this.loadScanState(cfg.targetLevel);
+      if (!scanState.active) {
+        Utils.log(`食谱: ${cfg.targetLevel}本轮已完成，等待下次调度开启新轮次`);
+        return true;
+      }
       // 详情页：学习 / 升级
       if (/^\/xz\/cook_\d+/.test(path)) {
         return this.processDetail();
@@ -1596,12 +1635,11 @@
         Utils.click(nextPage);
         return false;
       }
-      Utils.log('食谱: 当前列表已扫完');
-      Utils.gset(this.scanStateKey, null);
-      Utils.gset('recipe_target_level', 'off');
-      const levelSelect = document.getElementById('dxzxx-recipe-level');
-      if (levelSelect) levelSelect.value = 'off';
-      Utils.showStatus('食谱', '扫描完成，目标等级已关闭');
+      Utils.log('食谱: 当前可升级分类已扫完，本轮完成');
+      scanState.active = false;
+      scanState.completedAt = Date.now();
+      Utils.gset(this.scanStateKey, scanState);
+      Utils.showStatus('食谱', `本轮完成，长期目标保留为${cfg.targetLevel}`);
       return true;
     },
 
@@ -2691,6 +2729,9 @@
         return;
       }
 
+      // 周期食谱在真正触发时重置受阻集合并开启新轮次；长期目标等级保持不变。
+      if (entry.module === 'recipe') MOD.recipe.startScan('长期调度器');
+
       // 记下当前 mod_<id>_done 值，waitForDone 据此判断"是否新完成"
       const beforeAt = Utils.gget(`mod_${entry.module}_done`, 0);
 
@@ -2891,6 +2932,13 @@
         Utils.log(`计划[${stepIdx + 1}/${this.PLAN.length}] ${step.module}: 已关闭，跳过`);
         this.advance();
         return;
+      }
+
+      // 同一次AutoPilot食谱步骤只准备一次；跨页面刷新不能反复清空blocked集合。
+      if (step.module === 'recipe' && state.recipePreparedStep !== stepIdx) {
+        MOD.recipe.startScan('自动驾驶');
+        state.recipePreparedStep = stepIdx;
+        Utils.gset(this.stateKey, state);
       }
 
       // 模块自己声明负责当前页：只由 AutoPilot 执行一次，Router 不再抢跑
