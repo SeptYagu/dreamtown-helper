@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.43
+// @name         梦想小镇日常一体化 v3.44
 // @namespace    http://tampermonkey.net/
-// @version      3.43
+// @version      3.44
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,9 @@
 // ==/UserScript==
 
 /*
+ * v3.44 变更（2026-07-15 标题显示自己餐厅ID）
+ * - 面板标题右侧常驻显示自己餐厅ID获取状态，自动驾驶刷新标题时仍保留
+ *
  * v3.43 变更（2026-07-15 自己/好友餐厅隔离）
  * - 自己餐厅概览自动从“IDxxxx”和真实楼层链接交叉学习餐厅ID
  * - restaurant_<uid>_<floor> 只有uid等于已记录自己的ID时才执行餐厅管理
@@ -231,7 +234,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.43';
+  const SCRIPT_VERSION = '3.44';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -466,11 +469,18 @@
 
   // ==================== 控制面板 ====================
   const Panel = {
+    titleHtml(stepHtml = '') {
+      const selfId = String(Utils.gget('self_restaurant_id', '') || '').replace(/\D/g, '');
+      const idText = selfId ? `自己餐厅id已获取：${selfId}` : '自己餐厅id未获取';
+      return `🦌 梦想小镇日常 v${SCRIPT_VERSION}${stepHtml}<span class="self-restaurant-id">${idText}</span>`;
+    },
+
     create() {
       if (document.getElementById('dxzxx-panel')) return;
       GM_addStyle(`
         #dxzxx-panel{position:fixed;top:10px;right:10px;z-index:99999;background:rgba(255,255,255,.97);border:1px solid #ccc;border-radius:8px;padding:6px;box-shadow:0 4px 16px rgba(0,0,0,.15);font-size:12px;line-height:1.25;width:560px;box-sizing:border-box;font-family:Arial,sans-serif;max-height:calc(100vh - 20px);overflow-y:auto;}
-        #dxzxx-panel h3{margin:0 0 3px;font-size:15px;line-height:1.2;border-bottom:1px solid #eee;padding-bottom:3px;color:#333;}
+        #dxzxx-panel h3{display:flex;align-items:center;gap:6px;margin:0 0 3px;font-size:15px;line-height:1.2;border-bottom:1px solid #eee;padding-bottom:3px;color:#333;}
+        #dxzxx-panel h3 .self-restaurant-id{margin-left:auto;font-size:11px;font-weight:normal;color:#2e7d32;white-space:nowrap;}
         #dxzxx-panel .row{display:flex;justify-content:space-between;align-items:center;gap:4px;padding:1px 0;min-width:0;font-size:12px;line-height:1.2;}
         #dxzxx-panel .row label{cursor:pointer;flex:1;}
         #dxzxx-panel .toggle{padding:1px 7px;border-radius:10px;font-size:11px;cursor:pointer;user-select:none;border:1px solid transparent;flex:0 0 auto;}
@@ -505,7 +515,7 @@
       panel.id = 'dxzxx-panel';
       // 先在不可见状态完成动态行与调度状态填充，避免浏览器绘制半初始化面板。
       panel.style.visibility = 'hidden';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v${SCRIPT_VERSION}</h3>
+      panel.innerHTML = `<h3>${this.titleHtml()}</h3>
         <div class="panel-columns">
           <div class="panel-column">
             <details open>
@@ -738,13 +748,13 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v${SCRIPT_VERSION} <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = Panel.titleHtml(` <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`);
       } else {
         btn.textContent = '🚀 立即跑一轮全套';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v${SCRIPT_VERSION}`;
+        if (h3) h3.innerHTML = Panel.titleHtml();
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -1507,6 +1517,7 @@
       if (previous !== titleId) {
         Utils.gset(this.SELF_ID_KEY, titleId);
         Utils.log(`餐厅: 已学习自己的餐厅ID ${titleId}${previous ? `（原 ${previous}）` : ''}`);
+        if (document.getElementById('dxzxx-panel')) Panel.refreshAutopilotUI();
       }
       return titleId;
     },

@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.43 metadata and shared panel version", "// @version      3.43" in text and "const SCRIPT_VERSION = '3.43';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.44 metadata and shared panel version", "// @version      3.44" in text and "const SCRIPT_VERSION = '3.44';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -39,6 +39,8 @@ require("scoped daily projects bypass only their own switch", "scope?.startsWith
 require("panel scheduler information uses freed space", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
 require("panel falls back to one column on narrow screens", "@media (max-width:620px)" in text and "grid-template-columns:1fr" in text)
 require("panel enlarges font while overriding site line height", "font-size:12px;line-height:1.25;width:560px" in text and "font-size:12px;line-height:1.2;" in text)
+require("panel title shows learned self restaurant id", "自己餐厅id已获取：${selfId}" in text and "自己餐厅id未获取" in text and 'class="self-restaurant-id"' in text)
+require("autopilot title refresh preserves self id", text.count("Panel.titleHtml(") >= 2 and "Panel.refreshAutopilotUI();" in text)
 require("panel scheduler inner box overrides site line height", "#dxzxx-sched-wrap>div{line-height:1.25;}" in text)
 top_start = text.index('class="panel-columns"')
 daily_ui = text.index("每日项目（早饭后执行）", top_start)
