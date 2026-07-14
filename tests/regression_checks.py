@@ -15,7 +15,8 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.14 metadata", "// @version      3.14" in text and "日常一体化 v3.14" in text)
+require("v3.15 metadata", "// @version      3.15" in text and "日常一体化 v3.15" in text)
+require("server time accepts current and legacy labels", "/(?:驯鹿|家园)报时[：:]/" in text)
 
 coupon_ids = re.search(r"PROP_IDS:\s*\[([^\]]+)\]", text)
 require("food coupon whitelist exists", coupon_ids is not None)
@@ -102,7 +103,8 @@ require("market schedules pre-6 on same day", "todaySix.setHours(6, 0, 0, 0);" i
 require("market catches up current active hour", "hour <= 23 && !ranThisHour" in market_schedule and "nowMs + 5000" in market_schedule)
 require("market schedules post-23 on next day", "tomorrow.setDate(tomorrow.getDate() + 1);" in market_schedule and "tomorrow.setHours(6, 0, 0, 0);" in market_schedule)
 require("market removed normalized-date double increment", "next.setHours(next.getHours() + 1)" not in market_schedule)
-require("scheduler migration clears stale timing", "['market', 'guardian', 'recipe'].forEach" in text and "scheduler_schema_version" in text)
+require("scheduler migration clears every stale plan", "Utils.gset(`sched_${id}_nextAt`, 0);" in text and "scheduler_schema_version', 3" in text)
 require("scheduler migration converts legacy local timestamps", "oldLastRun + serverOffset" in text and "ALL_ENTRIES().forEach" in text)
+require("scheduler migration resets meal window date", "sched_energy_lastWindow', null" in text and "sched_energy_lastResetDay', null" in text)
 
 print(f"\nAll regression checks passed: {SCRIPT}")

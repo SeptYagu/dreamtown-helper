@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.14
+// @name         梦想小镇日常一体化 v3.15
 // @namespace    http://tampermonkey.net/
-// @version      3.14
+// @version      3.15
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.15 变更（2026-07-14 服务器时间兼容）
+ * - 当前站点“驯鹿报时”已改名“家园报时”，同时兼容两种服务器时间标签
+ * - 重置 v3.14 用本地时区误算的 nextAt，并把历史 lastRun 迁移到服务器时间轴
+ *
  * v3.14 变更（2026-07-14 长期调度修复）
  * - 到期任务保留在队列中逐个执行，不再因其他任务占用而跳到下一周期
  * - 食材券加入每日调度；市场修复 23 点跨日并支持当前小时补跑
@@ -159,7 +163,7 @@
     getServerTime() {
       try {
         const ps = Array.from(document.querySelectorAll('p'));
-        const el = ps.find(p => p.textContent.includes('驯鹿报时：'));
+        const el = ps.find(p => /(?:驯鹿|家园)报时[：:]/.test(p.textContent));
         if (el) {
           const m = el.textContent.match(/(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
           if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
@@ -318,7 +322,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.14</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.15</h3><div id="dxzxx-rows"></div>
         <details>
           <summary>餐厅子开关</summary>
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
@@ -480,14 +484,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.14 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.15 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 立即跑一轮全套';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.14`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.15`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -2537,15 +2541,18 @@
     if (Utils.gget('recipe_target_level', 'off') === '特色') {
       Utils.gset('recipe_target_level', '中品');
     }
-    // 丢弃旧版已算出的错误市场跨日时间及带正向抖动的 24h 时间；按 lastRun 重算。
-    if (Utils.gget('scheduler_schema_version', 1) < 2) {
+    // v3.15：旧版未识别“家园报时”，其 nextAt 均可能落在本地时区；全部清除后按服务器时间重算。
+    if (Utils.gget('scheduler_schema_version', 1) < 3) {
       const serverOffset = Utils.getServerTime().getTime() - Date.now();
       ALL_ENTRIES().forEach(({ id }) => {
         const oldLastRun = Utils.gget(`sched_${id}_lastRun`, 0);
         if (oldLastRun > 0) Utils.gset(`sched_${id}_lastRun`, oldLastRun + serverOffset);
+        Utils.gset(`sched_${id}_nextAt`, 0);
       });
-      ['market', 'guardian', 'recipe'].forEach(id => Utils.gset(`sched_${id}_nextAt`, 0));
-      Utils.gset('scheduler_schema_version', 2);
+      Utils.gset('sched_next', null);
+      Utils.gset('sched_energy_lastWindow', null);
+      Utils.gset('sched_energy_lastResetDay', null);
+      Utils.gset('scheduler_schema_version', 3);
     }
     Panel.create();
     // 主页加载：若 AutoPilot 开着，显示状态
