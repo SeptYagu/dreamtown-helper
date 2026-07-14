@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.17
+// @name         梦想小镇日常一体化 v3.18
 // @namespace    http://tampermonkey.net/
-// @version      3.17
+// @version      3.18
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,9 @@
 // ==/UserScript==
 
 /*
+ * v3.18 变更（2026-07-14 项目次数保存）
+ * - 次数输入同时监听 input/change，编辑后立即持久化，跨页不再恢复推荐值
+ *
  * v3.17 变更（2026-07-14 每日固定任务补跑）
  * - 当天已过计划时刻但尚未完成时，启动调度器立即补跑，不再直接跳到明天
  *
@@ -363,7 +366,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.17</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.18</h3><div id="dxzxx-rows"></div>
         <details open>
           <summary>每日项目（早饭后执行）</summary>
           <div id="dxzxx-project-rows"></div>
@@ -465,12 +468,14 @@
         });
       });
       panel.querySelectorAll('[data-project-count]').forEach(input => {
-        input.addEventListener('change', () => {
+        const saveProjectCount = () => {
           const value = Math.max(0, Math.min(500, parseInt(input.value, 10) || 0));
           input.value = String(value);
           Utils.gset(`project_${input.dataset.projectCount}_count`, value);
           if (Scheduler.isOn()) { Scheduler.computeAll(); Scheduler.scheduleNext(); }
-        });
+        };
+        input.addEventListener('input', saveProjectCount);
+        input.addEventListener('change', saveProjectCount);
       });
 
       // 食谱等级下拉
@@ -555,14 +560,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.17 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.18 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 立即跑一轮全套';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.17`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.18`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
