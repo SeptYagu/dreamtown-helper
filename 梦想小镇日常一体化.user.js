@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.46
+// @name         梦想小镇日常一体化 v3.47
 // @namespace    http://tampermonkey.net/
-// @version      3.46
+// @version      3.47
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.47 变更（2026-07-15 爆裂飞弹正式安全补货）
+ * - 正式规则改为库存低于100时单次购买300个
+ * - 购买接口同页更新时主动等待并验证库存增长，成功后立即返回，避免长期调度卡在running
+ * - 守护者页与飞弹商店仅在调度/自动驾驶/单项阶段运行，普通手动浏览不再被脚本接管刷新
+ *
  * v3.46 变更（2026-07-15 爆裂飞弹真实输入框兼容）
  * - 真实商店数量框ID为buyNum，同时兼容旧版buy_num；继续保留700/3小额测试规则
  *
@@ -242,7 +247,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.46';
+  const SCRIPT_VERSION = '3.47';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -2307,9 +2312,10 @@
   MOD.guardian = {
     match: (p) => p === '/xz/guardian' || p === '/xz/prop_82',
     schedule: 'guardian',
+    requiresScheduled: true,
     PURCHASE_KEY: 'guardian_missile_purchase',
-    REPLENISH_BELOW: 700,
-    BUY_COUNT: 3,
+    REPLENISH_BELOW: 100,
+    BUY_COUNT: 300,
     FAILED_RETRY_MS: 12 * 3600000,
     VERIFIED_GRACE_MS: 12 * 3600000,
 
@@ -2438,7 +2444,29 @@
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(buy);
           Utils.log(`守护者: 库存 ${have} < ${this.REPLENISH_BELOW}，已提交一次购买 ${this.BUY_COUNT} 个爆裂飞弹`);
-          return false;
+
+          // buyByActivity 当前是同页更新，不一定触发页面重载；主动轮询验证，
+          // 让Router/Scheduler也能完成本轮，而不只依赖AutoPilot的3秒续跑。
+          for (let i = 0; i < 12; i++) {
+            await Utils.sleep(500);
+            const after = this.parseStoreInventory();
+            if (after !== null && after >= have + this.BUY_COUNT) {
+              const verified = {
+                threshold: this.REPLENISH_BELOW,
+                buyCount: this.BUY_COUNT,
+                before: have,
+                clickedAt: Date.now(),
+                after,
+                verifiedAt: Date.now(),
+              };
+              Utils.gset(this.PURCHASE_KEY, verified);
+              Utils.log(`守护者: 同页购买验证成功，库存 ${have} → ${after}`);
+              return this.returnFromStore(after, `已确认购买 ${this.BUY_COUNT} 个爆裂飞弹成功`);
+            }
+          }
+          Utils.warn(`守护者: 购买后6秒内库存未确认增长，12小时内不重复购买，本轮安全结束`);
+          Utils.showStatus('守护者', '购买未确认，安全结束');
+          return true;
         }
         Utils.warn('守护者: 商店页未找到数量框或购买按钮');
         return true;
