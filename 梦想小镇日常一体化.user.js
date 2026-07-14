@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.9
+// @name         梦想小镇日常一体化 v3.10
 // @namespace    http://tampermonkey.net/
-// @version      3.9
+// @version      3.10
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.10 变更（2026-07-14 餐厅安全修复）
+ * - 打蟑螂也增加体力不足退出和每轮 20 次硬上限，避免失败后重复刷新
+ * - 首次升级救援同时关闭餐厅、打蟑螂和翻柜，确保当前失控页立即停止
+ *
  * v3.9 变更（2026-07-14 餐厅安全修复）
  * - 餐厅翻柜增加每轮 120 次硬上限；失败或超限会自动关闭翻柜子开关
  * - 首次升级若正困在餐厅页，自动停止 AutoPilot 并关闭餐厅，确保立即脱困
@@ -254,6 +258,18 @@
     Utils.gset('autopilot_session', null);
     Utils.gset('autopilot_emergency_stop', false);
   }
+  if (!Utils.gget('v310_restaurant_rescue_done', false) && location.pathname.startsWith('/xz/restaurant')) {
+    Utils.gset('v310_restaurant_rescue_done', true);
+    Utils.gset('mod_restaurant_enabled', false);
+    Utils.gset('restaurant_cockroach', false);
+    Utils.gset('restaurant_dig', false);
+    Utils.gset('restaurant_roach_attempts', 0);
+    Utils.gset('restaurant_dig_attempts', 0);
+    Utils.gset('restaurant_remaining_floors', []);
+    Utils.gset('autopilot_state', { enabled: false });
+    Utils.gset('autopilot_session', null);
+    Utils.gset('autopilot_emergency_stop', false);
+  }
 
   // ==================== 控制面板 ====================
   const Panel = {
@@ -284,7 +300,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.9</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.10</h3><div id="dxzxx-rows"></div>
         <details>
           <summary>餐厅子开关</summary>
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
@@ -356,6 +372,7 @@
             const cur = t.classList.contains('on');
             Utils.gset(sub, !cur);
             if (sub === 'restaurant_dig' && cur) Utils.gset('restaurant_dig_attempts', 0);
+            if (sub === 'restaurant_cockroach' && cur) Utils.gset('restaurant_roach_attempts', 0);
             t.classList.toggle('on');
             t.classList.toggle('off');
             t.textContent = !cur ? '开' : '关';
@@ -445,14 +462,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.9 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.10 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 自动跑全套日常';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.9`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.10`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -1059,6 +1076,7 @@
   MOD.restaurant = {
     match: (p) => p === '/xz/restaurant' || /\/xz\/restaurant_\d+_\d+/.test(p),
     schedule: 'restaurant',
+    MAX_ROACH_ATTEMPTS: 20,
     MAX_DIG_ATTEMPTS: 120,
 
     // 9.1 概览页：添油 + 扫感染楼层 → 导航去第一层
@@ -1086,19 +1104,28 @@
 
     // 9.2 楼层页：打蟑 + 翻柜 + 跳下一感染楼层（或回概览）
     async processFloor() {
+      const resultText = document.body.textContent || '';
       if (Utils.gget('restaurant_cockroach', false)) {
-        const roachBtns = Array.from(document.querySelectorAll("a[onclick^='killCockroach']"));
-        if (roachBtns.length > 0) {
-          await Utils.sleep(Utils.randMs(1, 2));
-          Utils.click(roachBtns[0]);
-          Utils.log(`餐厅: 清除本页第一个蟑螂（共 ${roachBtns.length} 个），刷新后继续`);
-          return false;
+        const attempts = Utils.gget('restaurant_roach_attempts', 0);
+        if (/体力不足|打蟑螂失败|无法继续打/.test(resultText)) {
+          Utils.warn('餐厅: 打蟑螂已停止（体力不足或操作失败）');
+          Utils.gset('restaurant_cockroach', false);
+        } else if (attempts >= this.MAX_ROACH_ATTEMPTS) {
+          Utils.warn(`餐厅: 打蟑螂达到每轮 ${this.MAX_ROACH_ATTEMPTS} 次上限，自动关闭`);
+          Utils.gset('restaurant_cockroach', false);
         } else {
+          const roachBtns = Array.from(document.querySelectorAll("a[onclick^='killCockroach']"));
+          if (roachBtns.length > 0) {
+            await Utils.sleep(Utils.randMs(1, 2));
+            Utils.gset('restaurant_roach_attempts', attempts + 1);
+            Utils.click(roachBtns[0]);
+            Utils.log(`餐厅: 清除本页第一个蟑螂（本轮 ${attempts + 1}/${this.MAX_ROACH_ATTEMPTS}，本页共 ${roachBtns.length} 个）`);
+            return false;
+          }
           Utils.log('餐厅: 当前楼层无蟑螂');
         }
       }
       if (Utils.gget('restaurant_dig', false)) {
-        const resultText = document.body.textContent || '';
         if (/体力不足|翻橱柜失败|无法继续翻/.test(resultText)) {
           Utils.log('餐厅: 翻柜已停止（体力不足或操作失败）');
           Utils.gset('restaurant_dig', false);
@@ -2111,7 +2138,10 @@
         runMs: entry.runMs || 10000,
         beforeAt,
       });
-      if (entry.module === 'restaurant') Utils.gset('restaurant_dig_attempts', 0);
+      if (entry.module === 'restaurant') {
+        Utils.gset('restaurant_roach_attempts', 0);
+        Utils.gset('restaurant_dig_attempts', 0);
+      }
 
       const phase = Utils.gget(PHASE_KEY, null);
       if (!await this.navigatePhase(phase, location.pathname)) {
@@ -2223,6 +2253,7 @@
         Scheduler.stop('AutoPilot 启动');
       }
       Utils.gset('autopilot_emergency_stop', false);
+      Utils.gset('restaurant_roach_attempts', 0);
       Utils.gset('restaurant_dig_attempts', 0);
       Utils.gset('autopilot_session', { id: Date.now(), iter: 0 });
       Utils.gset(this.stateKey, { enabled: true, stepIndex: 0, startedAt: Date.now() });
