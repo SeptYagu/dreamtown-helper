@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.22
+// @name         梦想小镇日常一体化 v3.23
 // @namespace    http://tampermonkey.net/
-// @version      3.22
+// @version      3.23
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.23 变更（2026-07-14 食谱全量升级扫描）
+ * - 材料不足或条件不满足的食谱仅在本轮跳过，继续升级其它符合目标的菜品
+ * - 扫描全部分页并处理完所有可行项后才关闭目标，避免单个受阻食谱反复进入
+ *
  * v3.22 变更（2026-07-14 酒吧拜访、好友蟑螂导航与调度交接）
  * - 每日酒吧项目新增“拜访雯姐”，按真实 see() 按钮存在/消失判断每日完成
  * - 好友蟑螂按列表和楼层的真实图标导航，不再无差别遍历所有好友全部楼层
@@ -164,7 +168,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.22';
+  const SCRIPT_VERSION = '3.23';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -519,6 +523,7 @@
         recipeLevel.value = cur;
         recipeLevel.addEventListener('change', () => {
           Utils.gset('recipe_target_level', recipeLevel.value);
+          Utils.gset('recipe_scan_state', null);
           Utils.showStatus('食谱', `目标等级 → ${recipeLevel.value}`, '#4CAF50');
         });
       }
@@ -1471,6 +1476,7 @@
   MOD.recipe = {
     match: (p) => /^\/xz\/cook_\d+/.test(p) || /\/xz\/cookbook_/.test(p) || /\/xz\/cook_universal_/.test(p),
     schedule: 'recipe',
+    scanStateKey: 'recipe_scan_state',
 
     // 等级映射：旧脚本 v4.0 完整保留
     LEVEL_MAP: {
@@ -1485,6 +1491,25 @@
         targetLevel: Utils.gget('recipe_target_level', 'off'),
         learn: Utils.gget('recipe_learn', true),
       };
+    },
+
+    loadScanState(targetLevel) {
+      let state = Utils.gget(this.scanStateKey, null);
+      if (!state || state.targetLevel !== targetLevel) {
+        state = { targetLevel, blocked: [], startedAt: Date.now() };
+        Utils.gset(this.scanStateKey, state);
+      }
+      state.blocked ||= [];
+      return state;
+    },
+
+    blockCurrentItem(reason) {
+      const cfg = this.getConfig();
+      const state = this.loadScanState(cfg.targetLevel);
+      const itemPath = location.pathname.match(/^\/xz\/cook_\d+/)?.[0];
+      if (itemPath && !state.blocked.includes(itemPath)) state.blocked.push(itemPath);
+      Utils.gset(this.scanStateKey, state);
+      Utils.log(`食谱: 本轮跳过 ${itemPath || '当前详情'}（${reason}），继续扫描其它菜品`);
     },
 
     // 主入口
@@ -1514,9 +1539,10 @@
         return true;
       }
       const targetValue = this.LEVEL_MAP[cfg.targetLevel] ?? 4;
+      const scanState = this.loadScanState(cfg.targetLevel);
 
       // 12.1.1 找"可升级"项：旧选择器（.gen_background_blue.s_room.s_font → p 含 .gen_grey + .gen_red 含"可升级"）
-      const upgradeItem = this.findUpgradeItem(targetValue);
+      const upgradeItem = this.findUpgradeItem(targetValue, scanState.blocked);
       if (upgradeItem) {
         await Utils.sleep(Utils.randMs(1, 2));
         Utils.click(upgradeItem.link);
@@ -1533,6 +1559,7 @@
         return false;
       }
       Utils.log('食谱: 当前列表已扫完');
+      Utils.gset(this.scanStateKey, null);
       Utils.gset('recipe_target_level', 'off');
       const levelSelect = document.getElementById('dxzxx-recipe-level');
       if (levelSelect) levelSelect.value = 'off';
@@ -1541,7 +1568,7 @@
     },
 
     // 找可升级项
-    findUpgradeItem(targetValue) {
+    findUpgradeItem(targetValue, blocked = []) {
       const sections = document.querySelectorAll('.gen_background_blue.s_room.s_font');
       for (const section of sections) {
         for (const p of section.querySelectorAll('p')) {
@@ -1554,6 +1581,7 @@
           if (cur === undefined) continue;
           if (cur >= targetValue) continue;
           const link = p.querySelector('a[href^="/xz/cook_"]');
+          if (link && blocked.includes(link.getAttribute('href') || '')) continue;
           if (link) return { name: link.textContent.trim(), level: lvlText, link };
         }
       }
@@ -1602,6 +1630,7 @@
       // 12.2.0 先检测升级失败标记
       if (this.checkUpgradeFailure()) {
         Utils.log('食谱: 检测到升级失败标记，跳过详情');
+        this.blockCurrentItem('升级失败');
         return this.returnToList() ? false : true;
       }
 
@@ -1623,6 +1652,7 @@
       if (currentLevel === undefined || targetLevel === undefined) {
         Utils.warn(`食谱: 无法解析等级（当前=${currentLevelText || '未知'}，目标=${cfg.targetLevel}），安全停止当前详情`);
         Utils.showStatus('食谱', '等级解析失败，已跳过');
+        this.blockCurrentItem('等级解析失败');
         return this.returnToList() ? false : true;
       }
       if (currentLevel >= targetLevel) {
@@ -1641,6 +1671,7 @@
 
       // 12.2.3 无可执行动作 → 返回列表（不点万能食材）
       Utils.log('食谱: 条件不满足或已达目标，返回列表');
+      this.blockCurrentItem(upgradeBtn ? '材料或条件不足' : '无普通食材升级按钮');
       return this.returnToList() ? false : true;
     },
 

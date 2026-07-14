@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.22 metadata and shared panel version", "// @version      3.22" in text and "const SCRIPT_VERSION = '3.22';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.23 metadata and shared panel version", "// @version      3.23" in text and "const SCRIPT_VERSION = '3.23';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel has no stale hardcoded title", "梦想小镇日常 v3.18" not in text and "梦想小镇日常 v3.20" not in text)
 require("server time accepts current and legacy labels", "/(?:驯鹿|家园)报时[：:]/" in text)
 require("server clock advances from static page sample", "_serverClockCapturedAt" in text and "localNow - this._serverClockCapturedAt" in text)
@@ -105,6 +105,10 @@ detail_end = text.index("// 找普通升级按钮", detail_start)
 detail = text[detail_start:detail_end]
 require("recipe checks target before upgrade button", "currentLevel >= targetLevel" in detail and detail.index("currentLevel >= targetLevel") < detail.index("findNormalUpgradeButton"))
 require("recipe fails closed when level is unknown", "currentLevel === undefined || targetLevel === undefined" in detail and "等级解析失败，已跳过" in detail)
+require("recipe scan skips blocked items", "scanStateKey: 'recipe_scan_state'" in text and "blocked.includes(link.getAttribute('href') || '')" in text)
+require("recipe continues after insufficient materials", "材料或条件不足" in text and "继续扫描其它菜品" in text)
+require("recipe clears scan state only after all pages", "食谱: 当前列表已扫完" in text and "Utils.gset(this.scanStateKey, null);" in text)
+require("recipe target change resets scan state", "Utils.gset('recipe_scan_state', null);" in text)
 
 require("scheduler persists fixed plans", "Utils.gset(`sched_${e.id}_nextAt`, e.nextRunAt);" in text)
 require("scheduler preserves overdue fixed plans", "e.nextRunAt = saved > 0 ? saved : this.computeFixedNext(e, nowMs);" in text)
