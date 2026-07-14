@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.44 metadata and shared panel version", "// @version      3.44" in text and "const SCRIPT_VERSION = '3.44';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.45 metadata and shared panel version", "// @version      3.45" in text and "const SCRIPT_VERSION = '3.45';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -96,7 +96,9 @@ require("autopilot recipe route is dynamic", "{ text: '可升级'," in text and 
 require("autopilot is labelled one-shot", "🚀 立即跑一轮全套" in text and "🚀 自动跑全套日常" not in text)
 
 require("guardian continues one shot per page", "guardianLaunch') && oc.includes('82') && oc.includes(',1)'" in text)
-require("guardian replenishes 300", "input.value = '300';" in text and "buyByActivity(0,82,0)" in text)
+require("guardian test replenishment is 3 below 700", "REPLENISH_BELOW: 700" in text and "BUY_COUNT: 3" in text and "buyByActivity(0,82,0)" in text)
+require("guardian parses both inventories without zero fallback", "parseGuardianInventory()" in text and "parseStoreInventory()" in text and "拥有数量\\s*[：:]\\s*(\\d+)" in text and "have === null" in text)
+require("guardian records and verifies one purchase", "PURCHASE_KEY: 'guardian_missile_purchase'" in text and "before: have" in text and "have >= purchase.before + this.BUY_COUNT" in text and "12小时内不重复购买" in text)
 require("egg action returns in-progress", "扭蛋: 已扭" in text and "return false;" in text)
 require("daily projects exclude moving", "DAILY_PROJECT_DEFS" in text and "project_move" not in text)
 require("daily project labels show vitality recommendations", "打蟑螂（推荐15次）" in text and "翻橱柜（推荐20次）" in text and "点赞/被赞（推荐5次）" in text)

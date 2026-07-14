@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.44
+// @name         梦想小镇日常一体化 v3.45
 // @namespace    http://tampermonkey.net/
-// @version      3.44
+// @version      3.45
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.45 变更（2026-07-15 爆裂飞弹安全补货测试版）
+ * - 爆裂飞弹库存低于700时单次购买3个，用于真实商店小额验收
+ * - 精确读取商店“拥有数量”，解析失败安全停止，购买后验证库存确实增长
+ * - 持久记录购买尝试，失败响应或刷新异常不会连续重复提交购买
+ *
  * v3.44 变更（2026-07-15 标题显示自己餐厅ID）
  * - 面板标题右侧常驻显示自己餐厅ID获取状态，自动驾驶刷新标题时仍保留
  *
@@ -234,7 +239,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.44';
+  const SCRIPT_VERSION = '3.45';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -2299,13 +2304,52 @@
   MOD.guardian = {
     match: (p) => p === '/xz/guardian' || p === '/xz/prop_82',
     schedule: 'guardian',
+    PURCHASE_KEY: 'guardian_missile_purchase',
+    REPLENISH_BELOW: 700,
+    BUY_COUNT: 3,
+    FAILED_RETRY_MS: 12 * 3600000,
+    VERIFIED_GRACE_MS: 12 * 3600000,
+
+    loadPurchase() {
+      const purchase = Utils.gget(this.PURCHASE_KEY, null);
+      if (!purchase) return null;
+      if (purchase.threshold !== this.REPLENISH_BELOW || purchase.buyCount !== this.BUY_COUNT) {
+        Utils.gset(this.PURCHASE_KEY, null);
+        return null;
+      }
+      if (purchase.verifiedAt && Date.now() - purchase.verifiedAt >= this.VERIFIED_GRACE_MS) {
+        Utils.gset(this.PURCHASE_KEY, null);
+        return null;
+      }
+      return purchase;
+    },
+
+    parseGuardianInventory() {
+      const text = Array.from(document.querySelectorAll('p')).map(p => p.textContent).join(' ');
+      const match = text.match(/\[爆裂飞弹\][\s\S]{0,40}?拥有\s*(\d+)\s*个/);
+      return match ? Number(match[1]) : null;
+    },
+
+    parseStoreInventory() {
+      const text = document.body?.innerText || document.body?.textContent || '';
+      const match = text.match(/拥有数量\s*[：:]\s*(\d+)/);
+      return match ? Number(match[1]) : null;
+    },
+
+    async returnFromStore(have, reason) {
+      const back = document.querySelector('a[onclick="backPage()"]') || Utils.findByText('a', '返回前页');
+      if (!back) {
+        Utils.warn(`守护者: ${reason}，但找不到返回前页按钮`);
+        return true;
+      }
+      await Utils.sleep(Utils.randMs(1, 2));
+      Utils.click(back);
+      Utils.log(`守护者: ${reason}（库存 ${have}），返回继续攻击`);
+      return false;
+    },
+
     async run() {
       if (location.pathname === '/xz/guardian') {
-        // 检查爆裂飞弹库存
-        const text = Array.from(document.querySelectorAll('p')).map(p => p.textContent).join(' ');
-        const m = text.match(/\[爆裂飞弹\][\s\S]{0,30}?拥有(\d+)个/);
-        const have = m ? +m[1] : 0;
-
         // 发射按钮: a[onclick="guardianLaunch(82, 1)"] 文本"发射"
         const launchBtn = Array.from(document.querySelectorAll('a')).find(a => {
           const oc = a.getAttribute('onclick') || '';
@@ -2316,48 +2360,81 @@
           Utils.showStatus('守护者', '已完成');
           return true;
         }
-        if (have > 0) {
+
+        const have = this.parseGuardianInventory();
+        if (have === null) {
+          Utils.warn('守护者: 无法读取爆裂飞弹库存，安全停止（不购买、不发射）');
+          Utils.showStatus('守护者', '库存读取失败');
+          return true;
+        }
+
+        const purchase = this.loadPurchase();
+        const recentlyVerified = purchase?.verifiedAt &&
+          Date.now() - purchase.verifiedAt < this.VERIFIED_GRACE_MS &&
+          have <= purchase.after;
+        if (have >= this.REPLENISH_BELOW || recentlyVerified) {
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(launchBtn);
-          Utils.log(`守护者: 发射爆裂 (库存 ${have})`);
+          Utils.log(`守护者: 发射爆裂（库存 ${have}${recentlyVerified ? '，本轮已补货' : ''}）`);
           return false;
-        } else {
-          // 库存不足去商店
-          const shopLink = Array.from(document.querySelectorAll('a')).find(a =>
-            (a.getAttribute('href') || '') === '/xz/prop_82'
-          );
-          if (shopLink) {
-            await Utils.sleep(Utils.randMs(1, 2));
-            Utils.click(shopLink);
-            Utils.log('守护者: 库存不足去商店');
-            return false;
-          }
-          Utils.warn('守护者: 库存不足且找不到爆裂飞弹商店入口');
+        }
+
+        const shopLink = Array.from(document.querySelectorAll('a')).find(a =>
+          (a.getAttribute('href') || '') === '/xz/prop_82'
+        );
+        if (!shopLink) {
+          Utils.warn(`守护者: 库存 ${have} < ${this.REPLENISH_BELOW}，但找不到爆裂飞弹商店入口`);
           return true;
         }
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(shopLink);
+        Utils.log(`守护者: 库存 ${have} < ${this.REPLENISH_BELOW}，进入商店补货`);
+        return false;
       } else {
-        // /xz/prop_82 商店页：与旧脚本一致，库存不足时补到约 300 个
-        const text = document.body.textContent;
-        const have = +(text.match(/(?:拥有|库存)\s*(\d+)\s*个/)?.[1] || 0);
-        if (have >= 300) {
-          const back = document.querySelector('a[onclick="backPage()"]') || Utils.findByText('a', '返回前页');
-          if (back) {
-            await Utils.sleep(Utils.randMs(1, 2));
-            Utils.click(back);
-            Utils.log(`守护者: 飞弹库存 ${have}，返回继续攻击`);
-            return false;
-          }
+        // /xz/prop_82 商店页：必须明确读取库存，且每次提交后验证增长。
+        const have = this.parseStoreInventory();
+        if (have === null) {
+          Utils.warn('守护者: 商店无法读取“拥有数量”，安全停止（未购买）');
+          Utils.showStatus('守护者', '商店库存读取失败');
           return true;
         }
+
+        let purchase = this.loadPurchase();
+        if (purchase?.clickedAt && !purchase.verifiedAt) {
+          if (have >= purchase.before + this.BUY_COUNT) {
+            purchase = { ...purchase, after: have, verifiedAt: Date.now() };
+            Utils.gset(this.PURCHASE_KEY, purchase);
+            Utils.log(`守护者: 购买验证成功，库存 ${purchase.before} → ${have}`);
+            return this.returnFromStore(have, `已确认购买 ${this.BUY_COUNT} 个爆裂飞弹成功`);
+          }
+          if (Date.now() - purchase.clickedAt < this.FAILED_RETRY_MS) {
+            Utils.warn(`守护者: 已提交购买但库存未增长（${purchase.before} → ${have}），12小时内不重复购买`);
+            Utils.showStatus('守护者', '购买未确认，安全停止');
+            return true;
+          }
+          Utils.gset(this.PURCHASE_KEY, null);
+          purchase = null;
+        }
+
+        if (have >= this.REPLENISH_BELOW || purchase?.verifiedAt) {
+          return this.returnFromStore(have, have >= this.REPLENISH_BELOW ? '库存充足' : '本轮补货已经验证');
+        }
+
         const input = document.getElementById('buy_num');
         const buy = document.querySelector('a[onclick="buyByActivity(0,82,0)"]');
         if (input && buy) {
-          input.value = '300';
+          input.value = String(this.BUY_COUNT);
           input.dispatchEvent(new Event('input', { bubbles: true }));
           input.dispatchEvent(new Event('change', { bubbles: true }));
+          Utils.gset(this.PURCHASE_KEY, {
+            threshold: this.REPLENISH_BELOW,
+            buyCount: this.BUY_COUNT,
+            before: have,
+            clickedAt: Date.now(),
+          });
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(buy);
-          Utils.log('守护者: 已提交购买 300 个爆裂飞弹');
+          Utils.log(`守护者: 库存 ${have} < ${this.REPLENISH_BELOW}，已提交一次购买 ${this.BUY_COUNT} 个爆裂飞弹`);
           return false;
         }
         Utils.warn('守护者: 商店页未找到数量框或购买按钮');
