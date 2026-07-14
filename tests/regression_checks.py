@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.41 metadata and shared panel version", "// @version      3.41" in text and "const SCRIPT_VERSION = '3.41';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.42 metadata and shared panel version", "// @version      3.42" in text and "const SCRIPT_VERSION = '3.42';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -131,7 +131,15 @@ require("market explicitly completes when no purchase remains", "市场: 无常�
 require("market purchase remains in progress across refresh", "Utils.click(foodToBuy.buyButton);" in market_run and "return false;" in market_run)
 require("router respects explicit in-progress result", "(!inPlan && completed !== false)" in text)
 require("facility threshold restored to 5", "MIN_COUNT: 5" in text)
-require("facility schedule capped at 24h", "Math.min(remainingMs + offsetMs, 24 * 3600000)" in text)
+facility_run = text[text.index("MOD.facility = {"):text.index("// ----- 5. 食神")]
+require("facility buys exactly 10 below threshold", "BUY_COUNT: 10" in facility_run and "have < this.MIN_COUNT" in facility_run and "购买${this.BUY_COUNT}个" in facility_run)
+require("facility store requires explicit inventory", "parseStoreInventory()" in facility_run and r"拥有数量\s*[：:]\s*(\d+)" in facility_run)
+require("facility has no arbitrary purchase fallback", "备用购买" not in facility_run and "anyBuy" not in facility_run)
+require("manual facility shop remains safely enabled", "facility_manual_purchase_${propId}" in facility_run and "最近已尝试购买但库存仍为" in facility_run)
+require("facility cycle renews each installed target once", 'a[onclick="addFacility(${t.slot})"]' in facility_run and "state.renewed.push(t.propId)" in facility_run)
+require("facility cycle checks all three real shop links", "state.checked.includes(t.propId)" in facility_run and "点击 ${next.name} 名称进入商店检查库存" in facility_run)
+require("facility schedule is fixed at 12h", "lastRun + 12 * 3600000" in text and "runMs: 180000" in text)
+require("facility schedule migration drops stale plan", "v342_facility_schedule_migrated" in text and "sched_facility_nextAt', 0" in text)
 require("restaurant oil has independent switch", "restaurant_oil: true" in text and "restaurant_oil', true" in text)
 require("restaurant oil threshold restored", "if (cur < 11000)" in text)
 require("restaurant roach has failure stop and hard cap", "MAX_ROACH_ATTEMPTS: 20" in text and "restaurant_roach_attempts" in text and "打蟑螂已停止" in text)

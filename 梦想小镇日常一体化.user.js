@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.41
+// @name         梦想小镇日常一体化 v3.42
 // @namespace    http://tampermonkey.net/
-// @version      3.41
+// @version      3.42
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,12 @@
 // ==/UserScript==
 
 /*
+ * v3.42 变更（2026-07-14 设施续期与安全补货）
+ * - 设施流程改为每12小时执行：未设置则继续安装，已设置则每轮各续期一次
+ * - 安装/续期完成后依次进入三个真实商店，明确读取“拥有数量”后才判断库存
+ * - 库存低于5时只点击一次“购买10个”，验证库存确实增加；读取失败立即安全停止
+ * - 手动打开三种设施商店也会按同一阈值即时补货；用购买前库存记账杜绝失败时连续购买
+ *
  * v3.41 变更（2026-07-14 全面细项运行）
  * - 删除Esc键监听，总停止仅接受面板鼠标点击
  * - 餐厅子项、食谱学习与8个每日项目全部增加独立运行键
@@ -220,7 +226,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.41';
+  const SCRIPT_VERSION = '3.42';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -882,56 +888,195 @@
     },
   };
 
-  // ----- 4. 设施安装（智能调度）-----
+  // ----- 4. 设施安装/续期（每 12 小时）-----
   // 原脚本限定 3 项：广播/海报/老鼠夹（不放节油器/蟑螂药）
   // 只用长效，不用金牌/百分百/阿猫独家
   // 新版 URL: /xz/restaurant_facility（概览） + /xz/restaurant_facility_set_{1,2,4}_0（设置）
-  // 流程：概览页找"未设置"的 3 项之一 → 点"设置" → 在设置页选对应长效道具"使用"
-  // 库存不足时：购买长效设施（prop_13/14/40，需 3-4 星）
+  // 流程：补齐未设置设施 → 已设置设施每轮续期一次 → 逐一点击设施名进入商店核库存
+  // 商店必须明确读到“拥有数量”；低于 5 时只买一次 10 个并验证结果，任何解析失败都安全停止
   MOD.facility = {
     match: (p) => /\/xz\/restaurant_facility($|_set_)/.test(p) || /\/xz\/prop_(13|14|40)$/.test(p),
     schedule: 'facility',
+    STATE_KEY: 'facility_cycle_state',
     TARGETS: [
-      { name: '广播',   setHref: '/xz/restaurant_facility_set_1_0', setupText: '长效宣传广播', propId: 13, buyPage: '/xz/prop_13' },
-      { name: '海报',   setHref: '/xz/restaurant_facility_set_2_0', setupText: '长效手绘海报', propId: 14, buyPage: '/xz/prop_14' },
-      { name: '老鼠夹', setHref: '/xz/restaurant_facility_set_4_0', setupText: '长效老鼠夹',   propId: 40, buyPage: '/xz/prop_40' },
+      { name: '广播', slot: 1, setHref: '/xz/restaurant_facility_set_1_0', setupText: '长效宣传广播', propId: 13, buyPage: '/xz/prop_13' },
+      { name: '海报', slot: 2, setHref: '/xz/restaurant_facility_set_2_0', setupText: '长效手绘海报', propId: 14, buyPage: '/xz/prop_14' },
+      { name: '老鼠夹', slot: 4, setHref: '/xz/restaurant_facility_set_4_0', setupText: '长效老鼠夹',   propId: 40, buyPage: '/xz/prop_40' },
     ],
-    MIN_COUNT: 5,  // 与旧脚本一致：库存低于 5 时补货
-    recordMinRemaining() {
-      let minMs = Number.MAX_SAFE_INTEGER;
-      document.querySelectorAll('p').forEach(p => {
-        const txt = p.textContent;
-        const combined = txt.match(/剩余\s*(\d+)\s*天\s*(\d+)\s*小时/);
-        const hourOnly = txt.match(/剩余\s*(\d+)\s*小时/);
-        const minOnly = txt.match(/剩余\s*(\d+)\s*分钟/);
-        const ms = combined ? (+combined[1] * 86400000 + +combined[2] * 3600000)
-          : hourOnly ? +hourOnly[1] * 3600000
-          : minOnly ? +minOnly[1] * 60000 : 0;
-        if (ms > 0 && ms < minMs) minMs = ms;
-      });
-      Utils.gset('facility_min_remaining_ms', minMs < Number.MAX_SAFE_INTEGER ? minMs : 0);
-      if (minMs < Number.MAX_SAFE_INTEGER) Utils.log(`设施: 最短剩余 ${Math.round(minMs / 3600000)}h`);
+    MIN_COUNT: 5,
+    BUY_COUNT: 10,
+
+    contextToken() {
+      const phase = Utils.gget('sched_phase', null);
+      if (phase?.module === 'facility' && ['navigating', 'running'].includes(phase.state)) {
+        return `scheduler:${phase.startedAt || phase.firedAt || 0}`;
+      }
+      const autopilot = Utils.gget('autopilot_state', null);
+      if (autopilot?.enabled) return `autopilot:${autopilot.startedAt || 0}`;
+      return null;
     },
+
+    loadState() {
+      const token = this.contextToken();
+      if (!token) return null;
+      let state = Utils.gget(this.STATE_KEY, null);
+      const stale = !state?.startedAt || Date.now() - state.startedAt > 10 * 60000;
+      if (!state?.active || state.token !== token || stale) {
+        state = {
+          active: true,
+          token,
+          startedAt: Date.now(),
+          renewed: [],
+          checked: [],
+          purchases: {},
+          currentPropId: null,
+          returnPath: null,
+          inventoryCheck: false,
+        };
+        Utils.gset(this.STATE_KEY, state);
+        Utils.log('设施: 开始本轮安装/续期及三项库存检查');
+      }
+      return state;
+    },
+
+    saveState(state) {
+      Utils.gset(this.STATE_KEY, state);
+    },
+
+    failClosed(state, message) {
+      state.active = false;
+      state.error = message;
+      this.saveState(state);
+      Utils.warn(`设施: ${message}，本轮安全停止（未继续购买）`);
+      Utils.showStatus('设施', '安全停止');
+      return true;
+    },
+
+    parseSetupInventory(row) {
+      const text = row?.textContent || '';
+      const match = text.match(/[×x]\s*(\d+)/) ||
+                    text.match(/[（(](\d+)\s*个?[）)]/) ||
+                    text.match(/拥有(?:数量)?\s*[：:]?\s*(\d+)\s*个?/) ||
+                    text.match(/剩余\s*(\d+)/);
+      return match ? Number(match[1]) : null;
+    },
+
+    parseStoreInventory() {
+      const text = document.body?.innerText || document.body?.textContent || '';
+      const match = text.match(/拥有数量\s*[：:]\s*(\d+)/);
+      return match ? Number(match[1]) : null;
+    },
+
+    async returnFromStore(state, target) {
+      const returnPath = state.returnPath || '/xz/restaurant_facility';
+      state.currentPropId = null;
+      state.returnPath = null;
+      state.inventoryCheck = false;
+      this.saveState(state);
+      Utils.log(`设施: ${target.name} 商店检查完成，返回 ${returnPath}`);
+      await Utils.sleep(Utils.randMs(1, 2));
+      history.back();
+      return false;
+    },
+
     async run() {
       const path = location.pathname;
+      const state = this.loadState();
+      if (!state) {
+        // 手动进入三种设施商店也应即时补货；只是不启动安装/续期流程。
+        const propMatch = path.match(/^\/xz\/prop_(13|14|40)$/);
+        if (propMatch) {
+          const propId = Number(propMatch[1]);
+          const target = this.TARGETS.find(t => t.propId === propId);
+          const have = this.parseStoreInventory();
+          if (have === null) {
+            Utils.warn(`设施: 手动打开 ${target.name} 商店，但无法读取“拥有数量”，不购买`);
+            return true;
+          }
+          const attemptKey = `facility_manual_purchase_${propId}`;
+          const attempt = Utils.gget(attemptKey, null);
+          if (attempt && have >= attempt.before + this.BUY_COUNT) Utils.gset(attemptKey, null);
+          if (have >= this.MIN_COUNT) {
+            Utils.log(`设施: ${target.name} 手动商店库存 ${have}，无需补货`);
+            return true;
+          }
+          if (attempt && Date.now() - attempt.clickedAt < 10 * 60000) {
+            Utils.warn(`设施: ${target.name} 最近已尝试购买但库存仍为 ${have}，不重复购买`);
+            return true;
+          }
+          const expectedOnclick = `buy(0,${propId},${this.BUY_COUNT},0)`;
+          const buy10 = Array.from(document.querySelectorAll('a')).find(a =>
+            a.textContent.trim() === `购买${this.BUY_COUNT}个` && (a.getAttribute('onclick') || '').replace(/\s/g, '') === expectedOnclick
+          );
+          if (!buy10) {
+            Utils.warn(`设施: ${target.name} 商店未找到精确的“购买10个”按钮，不购买`);
+            return true;
+          }
+          Utils.gset(attemptKey, { before: have, clickedAt: Date.now() });
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(buy10);
+          Utils.log(`设施: ${target.name} 手动商店库存 ${have} < ${this.MIN_COUNT}，购买一次 ${this.BUY_COUNT} 个`);
+          return false;
+        }
+        Utils.log(`设施: 手动浏览 ${path}，没有设施轮次，仅检查不安装/续期`);
+        return true;
+      }
 
-      // 4.1 概览页：仅处理 3 个目标中"未设置"的项
+      // 4.1 概览页：先补齐未设置项，再给已设置项每轮各续期一次。
       if (path === '/xz/restaurant_facility') {
-        this.recordMinRemaining();
         for (const t of this.TARGETS) {
-          // 找包含 "t.name：未设置" 的 p 行 → 其内的"设置"链接
+          const facilityLink = document.querySelector(`a[href="${t.buyPage}"]`);
+          const row = facilityLink?.closest('p') || Array.from(document.querySelectorAll('p')).find(p => p.textContent.includes(t.name));
           const setLink = Array.from(document.querySelectorAll('a[href="' + t.setHref + '"]')).find(a => {
-            const row = a.closest('p') || a.parentElement;
-            return row && row.textContent.includes(t.name) && row.textContent.includes('未设置');
+            const setRow = a.closest('p') || a.parentElement;
+            return setRow && setRow.textContent.includes(t.name) && setRow.textContent.includes('未设置');
           });
           if (setLink) {
+            state.currentPropId = t.propId;
+            this.saveState(state);
             await Utils.sleep(Utils.randMs(1, 2));
             Utils.click(setLink);
             Utils.log(`设施: ${t.name} 未设置，进入设置`);
             return false;
           }
+
+          if (!state.renewed.includes(t.propId)) {
+            const renew = row?.querySelector(`a[onclick="addFacility(${t.slot})"]`) ||
+              Array.from(row?.querySelectorAll('a') || []).find(a => a.textContent.trim() === '续期');
+            // 先记账再点击，防止刷新/响应异常造成同一轮重复续期。
+            state.renewed.push(t.propId);
+            this.saveState(state);
+            if (!renew) {
+              Utils.warn(`设施: ${t.name} 已设置，但未找到续期按钮，本轮跳过该按钮`);
+              continue;
+            }
+            await Utils.sleep(Utils.randMs(1, 2));
+            Utils.click(renew);
+            Utils.log(`设施: ${t.name} 已点击一次续期`);
+            return false;
+          }
         }
-        Utils.log('设施: 3 项目标设施全部已设置');
+
+        // 安装/续期处理完毕后，必须真实点击三个设施名逐一进入对应商店。
+        const next = this.TARGETS.find(t => !state.checked.includes(t.propId));
+        if (next) {
+          const shopLink = document.querySelector(`a[href="${next.buyPage}"]`);
+          if (!shopLink) return this.failClosed(state, `概览页找不到 ${next.name} 的真实商店链接`);
+          state.currentPropId = next.propId;
+          state.returnPath = '/xz/restaurant_facility';
+          state.inventoryCheck = true;
+          this.saveState(state);
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(shopLink);
+          Utils.log(`设施: 点击 ${next.name} 名称进入商店检查库存`);
+          return false;
+        }
+
+        state.active = false;
+        state.completedAt = Date.now();
+        this.saveState(state);
+        Utils.log('设施: 安装/续期完成，三个商店库存均已检查，本轮完成');
+        Utils.showStatus('设施', '三项库存已检查');
         return true;
       }
 
@@ -947,67 +1092,76 @@
           p.textContent.includes(target.setupText)
         );
         if (itemRow) {
-          // 解析库存：尝试多种格式 "× N" / "(N个)" / "拥有N个" / "剩余N"
-          const countMatch = itemRow.textContent.match(/[×x]\s*(\d+)/) ||
-                             itemRow.textContent.match(/[（(](\d+)\s*个?[）)]/) ||
-                             itemRow.textContent.match(/拥有\s*(\d+)\s*个/) ||
-                             itemRow.textContent.match(/剩余\s*(\d+)/);
-          const have = countMatch ? +countMatch[1] : 0;
-          Utils.log(`设施: ${target.setupText} 库存 ${have}`);
+          const have = this.parseSetupInventory(itemRow);
+          if (have === null) return this.failClosed(state, `设置页无法读取 ${target.setupText} 库存`);
+          Utils.log(`设施: 设置页读取 ${target.setupText} 库存 ${have}`);
 
-          // 库存 < MIN_COUNT 时优先去购买（即使有"使用"按钮也先补库存）
+          // 未设置且库存不足时，先由真实道具链接进入商店安全补货，再回来安装。
           if (have < this.MIN_COUNT) {
-            const buyLink = Array.from(document.querySelectorAll('a')).find(a =>
-              (a.getAttribute('href') || '') === target.buyPage
-            );
-            if (buyLink) {
-              await Utils.sleep(Utils.randMs(1, 2));
-              Utils.click(buyLink);
-              Utils.log(`设施: 库存 ${have} < ${this.MIN_COUNT}，跳购买 ${target.buyPage}`);
-              return false;
-            }
-            Utils.warn(`设施: 库存不足但未找到购买链接 ${target.buyPage}`);
-            return true;
+            const buyLink = itemRow.querySelector(`a[href="${target.buyPage}"]`) || document.querySelector(`a[href="${target.buyPage}"]`);
+            if (!buyLink) return this.failClosed(state, `库存 ${have} 但找不到 ${target.name} 商店链接`);
+            state.currentPropId = target.propId;
+            state.returnPath = target.setHref;
+            state.inventoryCheck = false;
+            this.saveState(state);
+            await Utils.sleep(Utils.randMs(1, 2));
+            Utils.click(buyLink);
+            Utils.log(`设施: 设置前库存 ${have} < ${this.MIN_COUNT}，进入商店补 10 个`);
+            return false;
           }
 
-          // 库存够 → 找"使用"按钮
           const useBtn = Array.from(itemRow.querySelectorAll('a')).find(a => a.textContent.trim() === '使用');
           if (useBtn) {
+            if (!state.renewed.includes(target.propId)) state.renewed.push(target.propId);
+            state.currentPropId = null;
+            this.saveState(state);
             await Utils.sleep(Utils.randMs(1, 2));
             Utils.click(useBtn);
             Utils.log(`设施: 已使用 ${target.setupText} (库存 ${have})`);
             return false;
           }
-          Utils.log(`设施: 库存 ${have} 充足但未找到使用按钮`);
-          return true;
+          return this.failClosed(state, `库存 ${have} 充足但未找到 ${target.setupText} 使用按钮`);
         }
-        Utils.log(`设施: 未找到 ${target.setupText} 行`);
-        return true;
+        return this.failClosed(state, `未找到 ${target.setupText} 行`);
       }
 
-      // 4.3 购买页（prop_13/14/40）：买 10 个长效设施
+      // 4.3 商店页：必须有本轮指定目标且明确读到库存；低于 5 时仅买一次 10 个。
       if (/^\/xz\/prop_(13|14|40)$/.test(path)) {
-        const buy10 = Utils.findByText('a', '购买10个');
-        if (buy10) {
+        const propId = Number(path.match(/prop_(\d+)$/)?.[1]);
+        const target = this.TARGETS.find(t => t.propId === propId);
+        if (!target || state.currentPropId !== propId) {
+          return this.failClosed(state, `商店 ${path} 与本轮目标不一致`);
+        }
+
+        const have = this.parseStoreInventory();
+        if (have === null) return this.failClosed(state, `${target.name} 商店无法读取“拥有数量”`);
+        const attempt = state.purchases[String(propId)];
+        Utils.log(`设施: ${target.name} 商店拥有数量 ${have}`);
+
+        if (attempt && have < attempt.before + this.BUY_COUNT) {
+          return this.failClosed(state, `${target.name} 已尝试购买但库存未增加 10（${attempt.before} → ${have}）`);
+        }
+
+        if (have < this.MIN_COUNT) {
+          if (attempt) return this.failClosed(state, `${target.name} 本轮购买后库存仍低于 ${this.MIN_COUNT}`);
+          const expectedOnclick = `buy(0,${propId},${this.BUY_COUNT},0)`;
+          const buy10 = Array.from(document.querySelectorAll('a')).find(a =>
+            a.textContent.trim() === `购买${this.BUY_COUNT}个` && (a.getAttribute('onclick') || '').replace(/\s/g, '') === expectedOnclick
+          );
+          if (!buy10) return this.failClosed(state, `${target.name} 商店未找到精确的“购买10个”按钮`);
+          state.purchases[String(propId)] = { before: have, clickedAt: Date.now() };
+          this.saveState(state);
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(buy10);
-          Utils.log(`设施: 购买10个 ${path.split('_').pop()}`);
+          Utils.log(`设施: ${target.name} 库存 ${have} < ${this.MIN_COUNT}，仅购买一次 ${this.BUY_COUNT} 个`);
           return false;
         }
-        // 备用：找其他购买链接
-        const anyBuy = Array.from(document.querySelectorAll('a')).find(a =>
-          (a.textContent || '').includes('购买') && (a.getAttribute('onclick') || '').match(/buy\(\s*0\s*,\s*\d+\s*,\s*\d+/)
-        );
-        if (anyBuy) {
-          await Utils.sleep(Utils.randMs(1, 2));
-          Utils.click(anyBuy);
-          Utils.log('设施: 备用购买链接已点击');
-          return false;
-        }
-        Utils.warn('设施: 购买页未找到购买按钮');
-        return true;
+
+        if (state.inventoryCheck && !state.checked.includes(propId)) state.checked.push(propId);
+        this.saveState(state);
+        return this.returnFromStore(state, target);
       }
-      return true;
+      return this.failClosed(state, `进入了未识别页面 ${path}`);
     },
   };
 
@@ -2741,19 +2895,13 @@
       },
     },
 
-    // 设施：智能调度 — 跟随最短剩余时间的设施 +1h 后重试
-    // facility_min_remaining_ms 是"持续时间"（毫秒），不是时间戳
+    // 设施：固定每 12 小时一轮；一轮包含安装/续期和三个商店库存检查。
     {
-      id: 'facility', module: 'facility', target: '/xz/restaurant_facility', nav: '设施', runMs: 25000,
+      id: 'facility', module: 'facility', target: '/xz/restaurant_facility', nav: '设施', runMs: 180000,
       computeNext() {
-        const remainingMs = Utils.gget('facility_min_remaining_ms', 0);
-        const offsetMs = 3600000;  // +1h 缓冲
         const nowMs = Utils.getServerTime().getTime();
-        // 剩余时间未知 → 1h 后首次执行
-        if (!remainingMs) return nowMs + offsetMs;
-        // 过期 + 偏移 → 触发时间 = now + 剩余 + 1h
-        const trigger = nowMs + Math.min(remainingMs + offsetMs, 24 * 3600000);
-        return trigger > nowMs ? trigger : nowMs + 60000;
+        const lastRun = Utils.gget('sched_facility_lastRun', 0);
+        return lastRun > 0 ? Math.max(nowMs, lastRun + 12 * 3600000) : nowMs + 5000;
       },
     },
   ];
@@ -3622,6 +3770,12 @@
       Utils.gset('sched_energy_lastWindow', null);
       Utils.gset('sched_energy_lastResetDay', null);
       Utils.gset('scheduler_schema_version', 3);
+    }
+    // v3.42：设施从“按剩余时间”切换为固定 12h，丢弃旧版计划和未完成轮次后重算。
+    if (!Utils.gget('v342_facility_schedule_migrated', false)) {
+      Utils.gset('sched_facility_nextAt', 0);
+      Utils.gset('facility_cycle_state', null);
+      Utils.gset('v342_facility_schedule_migrated', true);
     }
     // 先填充全部nextRunAt，再创建/显示面板；否则调度列表晚到会推动右侧按钮位置。
     if (Scheduler.isOn()) {
