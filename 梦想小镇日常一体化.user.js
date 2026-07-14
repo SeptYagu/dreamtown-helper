@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.7
+// @name         梦想小镇日常一体化 v3.8
 // @namespace    http://tampermonkey.net/
-// @version      3.7
+// @version      3.8
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,9 @@
 // ==/UserScript==
 
 /*
+ * v3.8 变更（2026-07-14 全功能实测修复）
+ * - 餐厅翻柜恢复旧脚本“体力不足/翻柜失败即停止”退出条件，避免 digOne 无限刷新
+ *
  * v3.7 变更（2026-07-14 全功能实测修复）
  * - 食材券匹配当前 /xz/prop_food_random_* 页面，按实际剩余数量点击“全部兑换”
  * - 兑换至 0 后返回仓库继续下一种，直到白名单券全部消失才完成
@@ -265,7 +268,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.7</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.8</h3><div id="dxzxx-rows"></div>
         <details>
           <summary>餐厅子开关</summary>
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
@@ -425,14 +428,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.7 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.8 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 自动跑全套日常';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.7`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.8`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -1077,13 +1080,18 @@
         }
       }
       if (Utils.gget('restaurant_dig', false)) {
-        const digBtns = Array.from(document.querySelectorAll("a[onclick^='digOne']"));
-        if (digBtns.length > 0) {
-          const pick = digBtns[Math.floor(Math.random() * digBtns.length)];
-          await Utils.sleep(Utils.randMs(1, 2));
-          Utils.click(pick);
-          Utils.log('餐厅: 已翻柜');
-          return false;
+        const resultText = document.body.textContent || '';
+        if (/体力不足|翻橱柜失败|无法继续翻/.test(resultText)) {
+          Utils.log('餐厅: 翻柜已停止（体力不足或操作失败）');
+        } else {
+          const digBtns = Array.from(document.querySelectorAll("a[onclick^='digOne']"));
+          if (digBtns.length > 0) {
+            const pick = digBtns[Math.floor(Math.random() * digBtns.length)];
+            await Utils.sleep(Utils.randMs(1, 2));
+            Utils.click(pick);
+            Utils.log('餐厅: 已翻柜');
+            return false;
+          }
         }
       }
 
