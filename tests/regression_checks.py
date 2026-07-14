@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.21 metadata and shared panel version", "// @version      3.21" in text and "const SCRIPT_VERSION = '3.21';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.22 metadata and shared panel version", "// @version      3.22" in text and "const SCRIPT_VERSION = '3.22';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel has no stale hardcoded title", "梦想小镇日常 v3.18" not in text and "梦想小镇日常 v3.20" not in text)
 require("server time accepts current and legacy labels", "/(?:驯鹿|家园)报时[：:]/" in text)
 require("server clock advances from static page sample", "_serverClockCapturedAt" in text and "localNow - this._serverClockCapturedAt" in text)
@@ -65,6 +65,11 @@ require("daily project counts persist on input and change", "addEventListener('i
 require("daily projects use 6am game day", "date.getTime() - 6 * 3600000" in text)
 require("daily friend actions are configurable", "['like', 'dig', 'roach'].some" in text and "DailyProjectState.remaining(type, state)" in text)
 require("daily bar actions are configurable", "DailyProjectState.remaining('fist'" in text and "DailyProjectState.remaining('cup'" in text and "DailyProjectState.remaining('number'" in text)
+require("daily bar visits Wenjie once", "拜访雯姐（推荐1次）" in text and "a[onclick=\"see()\"]" in text and "今日已拜访雯姐" in text)
+require("friend list prioritizes roach markers", "img[src=\"/readImg/xz_cockroach\"]" in text and "const marked = links.filter(hasRoachMark);" in text)
+require("friend floors follow roach markers", "const markedRoachFloor = floorLinks.find" in text and "Utils.click(floorToVisit);" in text)
+require("autopilot hands off to scheduler", "自动驾驶: 已交接长期循环调度器" in text and "Scheduler.start();" in text)
+require("emergency stop does not restart scheduler", "Esc 紧急停止', { resumeScheduler: false }" in text and "面板停止', { resumeScheduler: false }" in text)
 require("vitality claims first available award", "a[onclick^='addVitalityAward']" in text and "今日活跃: 领取第一项" in text)
 require("morning and evening reward sweeps exist", "vitalityMorning" in daily and "vitalityEvening" in daily and "seasonMorning" in daily and "seasonEvening" in daily and "eggMorning" in daily and "eggEvening" in daily)
 require("temporary reward routes are optional", "optional: true" in daily and "可选入口" in text)

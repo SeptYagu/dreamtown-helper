@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.21
+// @name         梦想小镇日常一体化 v3.22
 // @namespace    http://tampermonkey.net/
-// @version      3.21
+// @version      3.22
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.22 变更（2026-07-14 酒吧拜访、好友蟑螂导航与调度交接）
+ * - 每日酒吧项目新增“拜访雯姐”，按真实 see() 按钮存在/消失判断每日完成
+ * - 好友蟑螂按列表和楼层的真实图标导航，不再无差别遍历所有好友全部楼层
+ * - AutoPilot 正常完成或单独停止后自动恢复长期调度器；紧急停止仍同时停止两者
+ *
  * v3.21 变更（2026-07-14 餐厅真实入口与版本显示修复）
  * - 餐厅调度按真实 /xz/restaurant href 导航，不依赖首页动态用户名/“我的餐厅”文字
  * - 面板创建与状态刷新统一使用单一版本常量，避免刷新后标题回退到旧版本
@@ -159,7 +164,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.21';
+  const SCRIPT_VERSION = '3.22';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -316,6 +321,7 @@
     { id: 'fist', label: '猜拳（与猜杯合计推荐20次）', recommended: 10, module: 'dailyBar' },
     { id: 'cup', label: '猜酒杯（与猜拳合计推荐20次）', recommended: 10, module: 'dailyBar' },
     { id: 'number', label: '猜数字（推荐1次）', recommended: 1, module: 'dailyBar' },
+    { id: 'wenjie', label: '拜访雯姐（推荐1次）', recommended: 1, module: 'dailyBar' },
     { id: 'extraWish', label: '额外许愿果（常驻推荐0次）', recommended: 0, module: 'extraWish' },
   ];
   DAILY_PROJECT_DEFS.forEach(p => {
@@ -541,7 +547,7 @@
         if (e.key === 'Escape') {
           Utils.gset('autopilot_emergency_stop', true);
           let stopped = false;
-          if (AutoPilot.isOn()) { AutoPilot.stop('Esc 紧急停止'); stopped = true; }
+          if (AutoPilot.isOn()) { AutoPilot.stop('Esc 紧急停止', { resumeScheduler: false }); stopped = true; }
           if (Scheduler.isOn()) { Scheduler.stop('Esc 紧急停止'); stopped = true; }
           if (stopped) {
             Panel.refreshAutopilotUI();
@@ -558,7 +564,7 @@
       panel.querySelector('#dxzxx-hide').addEventListener('click', () => Panel.hide());
       panel.querySelector('#dxzxx-stop').addEventListener('click', () => {
         Utils.gset('autopilot_emergency_stop', true);
-        if (AutoPilot.isOn()) AutoPilot.stop('面板停止');
+        if (AutoPilot.isOn()) AutoPilot.stop('面板停止', { resumeScheduler: false });
         if (Scheduler.isOn()) Scheduler.stop('面板停止');
         Panel.refreshAutopilotUI();
         Panel.refreshSchedUI();
@@ -1846,13 +1852,23 @@
       }
 
       if (/^\/xz\/friend/.test(location.pathname)) {
+        const remainingLike = DailyProjectState.remaining('like', state);
+        const remainingDig = DailyProjectState.remaining('dig', state);
+        const remainingRoach = DailyProjectState.remaining('roach', state);
         const links = Array.from(document.querySelectorAll('a[href^="/xz/restaurant_"]')).filter(a => {
           const m = (a.getAttribute('href') || '').match(/^\/xz\/restaurant_(\d+)_1$/);
           return m && !state.visited.includes(m[1]);
         });
-        if (links.length > 0) {
+        const hasRoachMark = (link) => {
+          const prev = link.previousElementSibling;
+          return prev?.matches?.('img[src="/readImg/xz_cockroach"]');
+        };
+        const marked = links.filter(hasRoachMark);
+        // 点赞/翻柜需要普通好友时保留完整遍历；仅剩蟑螂时只进图标明确标记的好友。
+        const candidate = marked[0] || ((remainingLike > 0 || remainingDig > 0 || remainingRoach <= 0) ? links[0] : null);
+        if (candidate) {
           await Utils.sleep(Utils.randMs(1, 2));
-          Utils.click(links[0]);
+          Utils.click(candidate);
           return false;
         }
         const next = Array.from(document.querySelectorAll('a')).find(a => a.textContent.trim() === '下一页' && /^\/xz\/friend_0_\d+$/.test(a.getAttribute('href') || ''));
@@ -1886,13 +1902,21 @@
         }
       }
 
-      const nextFloor = Array.from(document.querySelectorAll(`a[href^="/xz/restaurant_${uid}_"]`)).find(a => {
+      const floorLinks = Array.from(document.querySelectorAll(`a[href^="/xz/restaurant_${uid}_"]`));
+      const nextFloor = floorLinks.find(a => {
         const m = (a.getAttribute('href') || '').match(/_(\d+)$/);
         return m && +m[1] === floor + 1;
       });
-      if (nextFloor && (DailyProjectState.remaining('dig', state) > 0 || DailyProjectState.remaining('roach', state) > 0)) {
+      const markedRoachFloor = floorLinks.find(a =>
+        a.nextElementSibling?.matches?.('img[src="/readImg/xz_cockroach"]')
+      );
+      // 翻柜仍需逐层；只剩蟑螂时直接跳到图标标记楼层，不再1→5盲扫。
+      const floorToVisit = DailyProjectState.remaining('dig', state) > 0
+        ? nextFloor
+        : (DailyProjectState.remaining('roach', state) > 0 ? markedRoachFloor : null);
+      if (floorToVisit) {
         await Utils.sleep(Utils.randMs(1, 2));
-        Utils.click(nextFloor);
+        Utils.click(floorToVisit);
         return false;
       }
       if (!state.visited.includes(uid)) state.visited.push(uid);
@@ -1927,7 +1951,7 @@
         state.pending = null;
         DailyProjectState.save('bar', state);
       }
-      if (['fist', 'cup', 'number'].every(id => DailyProjectState.remaining(id, state) <= 0)) return true;
+      if (['wenjie', 'fist', 'cup', 'number'].every(id => DailyProjectState.remaining(id, state) <= 0)) return true;
 
       const go = async (href) => {
         const link = document.querySelector(`a[href="${href}"]`);
@@ -1938,6 +1962,22 @@
       };
 
       if (location.pathname === '/xz/bar') {
+        if (DailyProjectState.remaining('wenjie', state) > 0) {
+          const visit = Array.from(document.querySelectorAll('a[onclick="see()"]'))
+            .find(a => a.textContent.trim() === '拜访雯姐');
+          if (visit) {
+            state.pending = 'wenjie';
+            DailyProjectState.save('bar', state);
+            await Utils.sleep(Utils.randMs(1, 2));
+            Utils.click(visit);
+            Utils.log('每日酒吧: 已点击拜访雯姐');
+            return false;
+          }
+          // 每日按钮消失就是服务端的已完成态；兼容升级后本地尚无计数的情况。
+          state.counts.wenjie = projectTarget('wenjie');
+          DailyProjectState.save('bar', state);
+          Utils.log('每日酒吧: 今日已拜访雯姐');
+        }
         if (DailyProjectState.remaining('number', state) > 0 && await go('/xz/number')) return false;
         if (DailyProjectState.remaining('fist', state) > 0 && await go('/xz/fist')) return false;
         if (DailyProjectState.remaining('cup', state) > 0 && await go('/xz/cup')) return false;
@@ -2319,7 +2359,7 @@
     start() {
       // 互斥：若 AutoPilot 在跑，先停它
       if (typeof AutoPilot !== 'undefined' && AutoPilot.isOn()) {
-        AutoPilot.stop('调度器启动');
+        AutoPilot.stop('调度器启动', { resumeScheduler: false });
       }
       Utils.gset(this.enabledKey, true);
       Utils.gset(PHASE_KEY, null);  // 清旧状态
@@ -2723,11 +2763,15 @@
       if (location.pathname !== '/xz/') this.navigateToHome();
     },
 
-    stop(reason = '') {
+    stop(reason = '', { resumeScheduler = true } = {}) {
       Utils.gset(this.stateKey, { enabled: false });
       Utils.gset('autopilot_session', null);
       Utils.log(`⏹ 自动计划停止${reason ? ': ' + reason : ''}`);
       Utils.showStatus('自动驾驶', '已停止', '#f44');
+      if (resumeScheduler && typeof Scheduler !== 'undefined' && !Scheduler.isOn()) {
+        Utils.log('自动驾驶: 已交接长期循环调度器');
+        Scheduler.start();
+      }
     },
 
     async continue() {
@@ -2737,7 +2781,7 @@
       // 紧急停止标志（外部 Esc/按钮可置位）
       if (Utils.gget('autopilot_emergency_stop', false)) {
         Utils.gset('autopilot_emergency_stop', false);
-        this.stop('紧急停止');
+        this.stop('紧急停止', { resumeScheduler: false });
         return;
       }
 
@@ -2759,7 +2803,6 @@
         // 全部跑完
         Utils.log('🎉 自动计划: 全部完成');
         Utils.showStatus('自动驾驶', '全部完成 ✓', '#4CAF50');
-        this.scheduleNext();
         this.stop('全部完成');
         return;
       }
