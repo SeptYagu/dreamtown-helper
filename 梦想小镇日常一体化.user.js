@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.10
+// @name         梦想小镇日常一体化 v3.11
 // @namespace    http://tampermonkey.net/
-// @version      3.10
+// @version      3.11
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.11 变更（2026-07-14 全功能实测修复）
+ * - 删除旧市场脚本从未包含的“每日菜场”自动购买，避免完整刷新后重复购买第一行
+ * - 食谱扫描完成关闭目标等级时，同步刷新面板下拉框
+ *
  * v3.10 变更（2026-07-14 餐厅安全修复）
  * - 打蟑螂也增加体力不足退出和每轮 20 次硬上限，避免失败后重复刷新
  * - 首次升级救援同时关闭餐厅、打蟑螂和翻柜，确保当前失控页立即停止
@@ -300,7 +304,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.10</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.11</h3><div id="dxzxx-rows"></div>
         <details>
           <summary>餐厅子开关</summary>
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
@@ -462,14 +466,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.10 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.11 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 自动跑全套日常';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.10`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.11`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -773,14 +777,13 @@
     },
   };
 
-  // ----- 6. 食材采购（特价 + 每日菜场 + 常驻菜补货）-----
+  // ----- 6. 食材采购（特价 + 常驻菜补货）-----
   // 整合自原 v5.3 整点食材采购助手的关键逻辑：
   //   1) 特价（buyDiscountFood，6-23 整点刷新）— 全买
-  //   2) 每日菜场（buyDayFood，6/12/18 刷新）— 仅买 1 级 ≤600金 / 2 级 ≤2800金
-  //   3) 常驻菜（buyFood：input + 按钮）— 库存 < 950 时补到 950
+  //   2) 常驻菜（buyFood：input + 按钮）— 库存 < 950 时补到 950
   //      1 级：≤519金 → 强制补到 950
   //      2 级：≤2650金 → 强制补到 950；鸡肉/猪肉无视价格强制补
-  //   4) 金币不足 → 24h 冷却（GM 持久化），避免反复失败
+  //   3) 金币不足 → 24h 冷却（GM 持久化），避免反复失败
   // 持久化字段：
   //   market_cooldown_until: ms 时间戳（0 或小于 now 表示可买）
   //   market_last_processed: 上次处理的菜（跨刷新续购）
@@ -794,8 +797,6 @@
       LEVEL2_TARGET: 950,        // 2 级菜目标库存
       LEVEL2_MAX_PRICE: 2650,    // 2 级菜触发补货的最高单价
       FORCE_BUY_2: ['鸡肉', '猪肉'],  // 强制购买的 2 级菜（无视价格）
-      DAY_LEVEL1_MAX: 600,       // 每日菜场 1 级阈值
-      DAY_LEVEL2_MAX: 2800,      // 每日菜场 2 级阈值
       BUY_CAP_PER_FIRE: 999,     // 单次 buyFood 输入框上限
       DISCOUNT_PRICE: 666,       // 与旧脚本一致：特价仅买 666 金币
     },
@@ -833,26 +834,7 @@
         }
       }
 
-      // 6.2 每日菜场（buyDayFood，6/12/18 刷新）：阈值过滤
-      const dayFoods = Array.from(document.querySelectorAll("a[onclick^='buyDayFood(0,']"));
-      for (const btn of dayFoods) {
-        const m = btn.getAttribute('onclick').match(/buyDayFood\(0,(\d+),(\d+)\)/);
-        if (!m) continue;
-        const row = btn.closest('p') || btn.parentElement;
-        const txt = row.textContent;
-        const levelMatch = txt.match(/\[(\d+)级\]/);
-        const priceMatch = txt.match(/(\d+)金币/);
-        if (!levelMatch || !priceMatch) continue;
-        const level = +levelMatch[1], price = +priceMatch[1];
-        const hit = (level === 1 && price <= this.CONFIG.DAY_LEVEL1_MAX) ||
-                    (level === 2 && price <= this.CONFIG.DAY_LEVEL2_MAX);
-        if (!hit) continue;
-        await Utils.sleep(Utils.randMs(1, 2));
-        Utils.click(btn);
-        Utils.log(`市场: 每日菜场 L${level} ${price}金 触发`);
-      }
-
-      // 6.3 常驻菜补货：解析 [N级]菜名(M) 价格金 + input.s_input + a[onclick^="buyFood"]
+      // 6.2 常驻菜补货：解析 [N级]菜名(M) 价格金 + input.s_input + a[onclick^="buyFood"]
       const staples = this.parseStapleFoods();
       if (staples.length === 0) {
         Utils.log('市场: 无常驻菜');
@@ -1414,6 +1396,8 @@
       }
       Utils.log('食谱: 当前列表已扫完');
       Utils.gset('recipe_target_level', 'off');
+      const levelSelect = document.getElementById('dxzxx-recipe-level');
+      if (levelSelect) levelSelect.value = 'off';
       Utils.showStatus('食谱', '扫描完成，目标等级已关闭');
       return true;
     },

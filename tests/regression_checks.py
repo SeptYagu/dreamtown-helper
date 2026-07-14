@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.10 metadata", "// @version      3.10" in text and "日常一体化 v3.10" in text)
+require("v3.11 metadata", "// @version      3.11" in text and "日常一体化 v3.11" in text)
 
 coupon_ids = re.search(r"PROP_IDS:\s*\[([^\]]+)\]", text)
 require("food coupon whitelist exists", coupon_ids is not None)
@@ -48,6 +48,7 @@ require("egg action returns in-progress", "扭蛋: 已扭" in text and "return f
 
 require("market discount is exactly 666", "DISCOUNT_PRICE: 666" in text and "price === this.CONFIG.DISCOUNT_PRICE" in text)
 require("market discount dedupes by server hour", "market_last_discount_hour" in text)
+require("market does not buy daily market rows", "buyDayFood" not in text and "DAY_LEVEL1_MAX" not in text and "DAY_LEVEL2_MAX" not in text)
 require("facility threshold restored to 5", "MIN_COUNT: 5" in text)
 require("facility schedule capped at 24h", "Math.min(remainingMs + offsetMs, 24 * 3600000)" in text)
 require("restaurant oil has independent switch", "restaurant_oil: true" in text and "restaurant_oil', true" in text)
@@ -59,6 +60,7 @@ require("restaurant roach has failure stop and hard cap", "MAX_ROACH_ATTEMPTS: 2
 require("restaurant v310 rescue disables both risky actions", "v310_restaurant_rescue_done" in text and "Utils.gset('restaurant_cockroach', false);" in text)
 require("recipe default is off", text.count("recipe_target_level', 'off'") >= 2)
 require("recipe disables itself after scan", "Utils.gset('recipe_target_level', 'off');" in text)
+require("recipe syncs disabled target to panel", "if (levelSelect) levelSelect.value = 'off';" in text)
 
 require("scheduler persists fixed plans", "Utils.gset(`sched_${e.id}_nextAt`, e.nextRunAt);" in text)
 require("scheduler start does not call missing init", "this.init();" not in text)
