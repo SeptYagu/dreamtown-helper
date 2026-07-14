@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.39
+// @name         梦想小镇日常一体化 v3.40
 // @namespace    http://tampermonkey.net/
-// @version      3.39
+// @version      3.40
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.40 变更（2026-07-14 常驻总停止）
+ * - “停止当前操作”按钮永久占位，不再因AutoPilot启动而插入并推动布局
+ * - 总停止会中止AutoPilot/Scheduler、清当前phase并锁住后续脚本点击
+ * - 仅在明确启动调度器、全套、单项或执行本页时解除停止锁
+ *
  * v3.39 变更（2026-07-14 面板按钮位置稳定）
  * - 面板显示前先计算完整调度列表，禁止状态内容晚到后推动按钮
  * - 调度状态区固定110px高度；运行中/空闲/列表刷新时控制按钮位置不变
@@ -210,7 +215,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.39';
+  const SCRIPT_VERSION = '3.40';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -222,6 +227,10 @@
     warn(m) { console.warn(`[一体化] ${m}`); },
 
     click(el) {
+      if (Utils.gget('operation_stopped', false)) {
+        Utils.warn('总停止锁已启用，阻止脚本继续点击');
+        return false;
+      }
       if (!el || !el.dispatchEvent) return false;
       ['mousedown', 'mouseup', 'click'].forEach(t => {
         el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: el.ownerDocument.defaultView }));
@@ -439,6 +448,7 @@
         #dxzxx-panel .panel-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start;}
         #dxzxx-panel .panel-column{min-width:0;}
         #dxzxx-panel .panel-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 6px;}
+        #dxzxx-stop{grid-column:1/-1;}
         #dxzxx-panel .single-run{width:auto;padding:1px 7px;margin:0;background:#4CAF50;color:#fff;font-size:11px;font-weight:normal;flex:0 0 auto;}
         #dxzxx-panel #dxzxx-rows .row.current{background:#FFE082;border-radius:3px;font-weight:bold;}
         #dxzxx-sched-wrap>div{line-height:1.25;}
@@ -479,7 +489,7 @@
             <div class="panel-actions">
               <button class="run-btn" id="dxzxx-run">▶ 立即执行本页</button>
               <button class="run-btn" id="dxzxx-autopilot" style="background:#FF9800;color:#000;">🚀 立即跑一轮全套</button>
-              <button class="run-btn" id="dxzxx-stop" style="background:#f44;color:#fff;display:none;">⏹ 立即停止（Esc）</button>
+              <button class="run-btn" id="dxzxx-stop" style="background:#f44;color:#fff;">⏹ 停止当前操作（Esc）</button>
             </div>
           </div>
           <div class="panel-column">
@@ -607,7 +617,11 @@
         });
       }
 
-      panel.querySelector('#dxzxx-run').addEventListener('click', () => Router.run());
+      panel.querySelector('#dxzxx-run').addEventListener('click', () => {
+        Utils.gset('operation_stopped', false);
+        Utils.gset('autopilot_emergency_stop', false);
+        Router.run();
+      });
       panel.querySelector('#dxzxx-autopilot').addEventListener('click', () => {
         if (AutoPilot.isOn()) {
           AutoPilot.stop('手动停止');
@@ -628,17 +642,7 @@
       });
       // Esc 紧急停止（同时停 AutoPilot 和 Scheduler）
       document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-          Utils.gset('autopilot_emergency_stop', true);
-          let stopped = false;
-          if (AutoPilot.isOn()) { AutoPilot.stop('Esc 紧急停止', { resumeScheduler: false }); stopped = true; }
-          if (Scheduler.isOn()) { Scheduler.stop('Esc 紧急停止'); stopped = true; }
-          if (stopped) {
-            Panel.refreshAutopilotUI();
-            Panel.refreshSchedUI();
-            Utils.showStatus('已停止', 'Esc 紧急停止触发', '#f44');
-          }
-        }
+        if (e.key === 'Escape') Panel.stopCurrentOperation('Esc 紧急停止');
       });
       panel.querySelector('#dxzxx-sched-refresh').addEventListener('click', () => {
         Scheduler.computeAll();
@@ -646,14 +650,7 @@
         Panel.refreshSchedUI();
       });
       panel.querySelector('#dxzxx-hide').addEventListener('click', () => Panel.hide());
-      panel.querySelector('#dxzxx-stop').addEventListener('click', () => {
-        Utils.gset('autopilot_emergency_stop', true);
-        if (AutoPilot.isOn()) AutoPilot.stop('面板停止', { resumeScheduler: false });
-        if (Scheduler.isOn()) Scheduler.stop('面板停止');
-        Panel.refreshAutopilotUI();
-        Panel.refreshSchedUI();
-        Utils.showStatus('已停止', '面板停止按钮触发', '#f44');
-      });
+      panel.querySelector('#dxzxx-stop').addEventListener('click', () => Panel.stopCurrentOperation('面板停止'));
 
       // 初始显示调度器状态
       Panel.refreshSchedUI();
@@ -668,16 +665,28 @@
       setInterval(() => { Panel.refreshSchedUI(); Panel.refreshAutopilotUI(); }, 5000);
     },
 
+    stopCurrentOperation(reason = '总停止') {
+      // 先上锁：已经在sleep中的动作醒来后也会被Utils.click拦截。
+      Utils.gset('operation_stopped', true);
+      Utils.gset('autopilot_emergency_stop', true);
+      if (AutoPilot.isOn()) AutoPilot.stop(reason, { resumeScheduler: false });
+      if (Scheduler.isOn()) Scheduler.stop(reason);
+      Utils.gset(PHASE_KEY, null);
+      Utils.gset('autopilot_session', null);
+      Utils.gset('restaurant_remaining_floors', []);
+      Panel.refreshAutopilotUI();
+      Panel.refreshSchedUI();
+      Utils.showStatus('已停止', `${reason}：当前操作及后续点击已中止`, '#f44');
+    },
+
     refreshAutopilotUI() {
       const btn = document.getElementById('dxzxx-autopilot');
-      const stopBtn = document.getElementById('dxzxx-stop');
       if (!btn) return;
       const on = AutoPilot.isOn();
       if (on) {
         btn.textContent = '⏸ 停止自动驾驶';
         btn.style.background = '#f44';
         btn.style.color = '#fff';
-        if (stopBtn) stopBtn.style.display = '';
         // 在面板标题下显示当前步骤
         const state = Utils.gget('autopilot_state', {});
         const stepIdx = state.stepIndex || 0;
@@ -689,7 +698,6 @@
         btn.textContent = '🚀 立即跑一轮全套';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
-        if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
         if (h3) h3.innerHTML = `🦌 梦想小镇日常 v${SCRIPT_VERSION}`;
       }
@@ -2660,6 +2668,8 @@
       if (typeof AutoPilot !== 'undefined' && AutoPilot.isOn()) {
         AutoPilot.stop('调度器启动', { resumeScheduler: false });
       }
+      Utils.gset('operation_stopped', false);
+      Utils.gset('autopilot_emergency_stop', false);
       Utils.gset(this.enabledKey, true);
       Utils.gset(PHASE_KEY, null);  // 清旧状态
       this.startWatchdog();
@@ -3129,6 +3139,7 @@
       if (typeof Scheduler !== 'undefined' && Scheduler.isOn()) {
         Scheduler.stop('AutoPilot 启动');
       }
+      Utils.gset('operation_stopped', false);
       Utils.gset('autopilot_emergency_stop', false);
       Utils.gset('restaurant_roach_attempts', 0);
       Utils.gset('autopilot_session', { id: Date.now(), iter: 0 });
@@ -3152,6 +3163,7 @@
       }
       const schedulerWasOn = typeof Scheduler !== 'undefined' && Scheduler.isOn();
       if (schedulerWasOn) Scheduler.stop(`单项运行 ${moduleId}`);
+      Utils.gset('operation_stopped', false);
       Utils.gset('autopilot_emergency_stop', false);
       Utils.gset('restaurant_roach_attempts', 0);
       Utils.gset('autopilot_session', { id: Date.now(), iter: 0 });
@@ -3349,6 +3361,10 @@
   // ==================== 路由 ====================
   const Router = {
     async run() {
+      if (Utils.gget('operation_stopped', false)) {
+        Utils.log('路由: 总停止锁已启用，跳过所有自动动作');
+        return;
+      }
       const path = location.pathname;
       // 必须在运行页面模块之前处理过期 phase；否则旧餐厅 phase 会先再次触发问题动作。
       if (Scheduler.isOn() && await Scheduler.recoverExpiredPhase(path)) return;
