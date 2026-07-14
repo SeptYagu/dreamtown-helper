@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.16
+// @name         梦想小镇日常一体化 v3.17
 // @namespace    http://tampermonkey.net/
-// @version      3.16
+// @version      3.17
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,9 @@
 // ==/UserScript==
 
 /*
+ * v3.17 变更（2026-07-14 每日固定任务补跑）
+ * - 当天已过计划时刻但尚未完成时，启动调度器立即补跑，不再直接跳到明天
+ *
  * v3.16 变更（2026-07-14 每日项目与领奖解耦）
  * - 新增可配置每日项目：点赞、翻柜、打蟑螂、猜拳、猜酒杯、猜数字、额外许愿
  * - 常驻活跃/季节/扭蛋只负责领奖；早饭后执行项目并领奖，晚饭后复查领奖
@@ -360,7 +363,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.16</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.17</h3><div id="dxzxx-rows"></div>
         <details open>
           <summary>每日项目（早饭后执行）</summary>
           <div id="dxzxx-project-rows"></div>
@@ -552,14 +555,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.16 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.17 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 立即跑一轮全套';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.16`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.17`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -2477,25 +2480,17 @@
       const jitterMs = (Math.random() * (entry.jitterMax - entry.jitterMin) + entry.jitterMin) * 60000;
       next = new Date(next.getTime() + jitterMs);
 
-      if (next.getTime() <= nowMs) {
-        next = new Date(next.getTime() + 86400000);
-      }
-
-      // runOnce + 今天已跑：next 必须跳到明天
-      // 检查 next 的日期，如果不是明天就 +1 天
+      // 固定每日任务：今天未跑且计划已过，必须立即补跑；今天已跑才排明天。
       if (entry.runOnce) {
         const lastRun = Utils.gget(`sched_${entry.id}_lastRun`, 0);
         const lastDay = lastRun ? new Date(lastRun).toDateString() : '';
         const today = new Date(nowMs).toDateString();
+        if (lastDay !== today && next.getTime() <= nowMs) return nowMs + 5000;
         if (lastDay === today) {
-          // next 已经是明天 → 保持；否则 +1 天
-          const tomorrow = new Date(nowMs + 86400000);
-          const tomorrowStr = tomorrow.toDateString();
-          const nextStr = new Date(next.getTime()).toDateString();
-          if (nextStr !== tomorrowStr) {
-            next = new Date(next.getTime() + 86400000);
-          }
+          next = new Date(next.getTime() + 86400000);
         }
+      } else if (next.getTime() <= nowMs) {
+        next = new Date(next.getTime() + 86400000);
       }
 
       return next.getTime();

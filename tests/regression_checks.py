@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.16 metadata", "// @version      3.16" in text and "日常一体化 v3.16" in text)
+require("v3.17 metadata", "// @version      3.17" in text and "日常一体化 v3.17" in text)
 require("server time accepts current and legacy labels", "/(?:驯鹿|家园)报时[：:]/" in text)
 
 coupon_ids = re.search(r"PROP_IDS:\s*\[([^\]]+)\]", text)
@@ -103,6 +103,7 @@ require("scheduler supports pattern navigation", "new RegExp(step.hrefPattern).t
 require("24h schedules have no cumulative jitter", "slot: '24h', jitterMin: 0, jitterMax: 0" in daily and "jitterMax: 60" not in daily)
 require("scheduler recomputes all tasks after return", "this.computeAll();\n        this.scheduleNext();" in text)
 require("scheduler records completion in server time", "Utils.gset(`sched_${phase.id}_lastRun`, Utils.getServerTime().getTime());" in text)
+require("fixed daily tasks catch up after missed slot", "if (lastDay !== today && next.getTime() <= nowMs) return nowMs + 5000;" in text)
 
 market_start = text.index("id: 'market', module: 'market', target: '/xz/market'")
 market_end = text.index("// 餐厅：17-45min", market_start)
