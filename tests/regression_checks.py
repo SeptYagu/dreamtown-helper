@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.19 metadata", "// @version      3.19" in text and "日常一体化 v3.19" in text)
+require("v3.20 metadata and panel", "// @version      3.20" in text and "日常一体化 v3.20" in text)
 require("server time accepts current and legacy labels", "/(?:驯鹿|家园)报时[：:]/" in text)
 require("server clock advances from static page sample", "_serverClockCapturedAt" in text and "localNow - this._serverClockCapturedAt" in text)
 
@@ -74,6 +74,9 @@ require("market discount dedupes by server hour", "market_last_discount_hour" in
 require("market does not buy daily market rows", "buyDayFood" not in text and "DAY_LEVEL1_MAX" not in text and "DAY_LEVEL2_MAX" not in text)
 require("market claims Tuesday reserve coupon first", "a[onclick^='getEverydayReserve']" in text and "已领取周二日常食材预定券" in text)
 require("market claim remains in progress across refresh", "Utils.click(reserveClaim);" in text and "return false;" in text)
+market_run = text[text.index("MOD.market = {"):text.index("// ----- 7. 食材券")]
+require("market explicitly completes when no purchase remains", "市场: 无常驻菜" in market_run and "市场: 常驻菜全部达标" in market_run and market_run.count("return true;") >= 5)
+require("market purchase remains in progress across refresh", "Utils.click(foodToBuy.buyButton);" in market_run and "return false;" in market_run)
 require("router respects explicit in-progress result", "(!inPlan && completed !== false)" in text)
 require("facility threshold restored to 5", "MIN_COUNT: 5" in text)
 require("facility schedule capped at 24h", "Math.min(remainingMs + offsetMs, 24 * 3600000)" in text)

@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.19
+// @name         梦想小镇日常一体化 v3.20
 // @namespace    http://tampermonkey.net/
-// @version      3.19
+// @version      3.20
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.20 变更（2026-07-14 自动驾驶纳入市场后的完成状态修复）
+ * - 市场无后续购买、冷却或资源不足时显式返回完成，避免调度器永久保持 running
+ * - 市场点击购买后显式保持未完成，刷新后继续检查；面板标题同步当前版本
+ *
  * v3.19 变更（2026-07-14 自动驾驶与调度时钟修复）
  * - 自动驾驶补齐每日好友、每日酒吧、额外许愿、今日活跃领奖和食材采购
  * - 页面“家园报时”只作时钟校准，之后按实际经过时间推进，避免5分钟重试永久停在同一分钟
@@ -385,7 +389,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.18</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.20</h3><div id="dxzxx-rows"></div>
         <details open>
           <summary>每日项目（早饭后执行）</summary>
           <div id="dxzxx-project-rows"></div>
@@ -929,7 +933,7 @@
       if (cooldownUntil > Date.now()) {
         const hours = Math.ceil((cooldownUntil - Date.now()) / 3600000);
         Utils.log(`市场: 金币不足冷却中（${hours}h 后恢复），跳本次`);
-        return;
+        return true;
       }
 
       // 6.0b 检测页面是否提示金币不足
@@ -938,7 +942,7 @@
         Utils.warn('市场: 检测到金币不足，启动 24h 冷却');
         Utils.gset('market_cooldown_until', Date.now() + 24 * 3600000);
         Utils.gset('market_last_processed', '');
-        return;
+        return true;
       }
 
       // 6.1 特价食材（整点 6-22 刷新）：恢复旧脚本的 666 严格过滤和同小时去重
@@ -960,13 +964,13 @@
       const staples = this.parseStapleFoods();
       if (staples.length === 0) {
         Utils.log('市场: 无常驻菜');
-        return;
+        return true;
       }
       const needBuy = staples.filter(f => this.shouldBuyStaple(f));
       if (needBuy.length === 0) {
         Utils.log('市场: 常驻菜全部达标');
         Utils.gset('market_last_processed', '');
-        return;
+        return true;
       }
 
       // 跨刷新续购：先看上次是否还在 needBuy 列表里
@@ -983,7 +987,7 @@
 
       // 计算购买数量（补到目标）
       const buyAmount = Math.min(foodToBuy.targetStock - foodToBuy.currentStock, this.CONFIG.BUY_CAP_PER_FIRE);
-      if (buyAmount <= 0) return;
+      if (buyAmount <= 0) return true;
 
       Utils.log(`市场: 准备补 ${foodToBuy.name} (${foodToBuy.level}级) ${foodToBuy.currentStock}→${foodToBuy.targetStock}, 本次买 ${buyAmount}`);
 
@@ -992,6 +996,7 @@
       await Utils.sleep(Utils.randMs(1, 2));
       Utils.click(foodToBuy.buyButton);
       Utils.log(`市场: 已点击 buyFood(${foodToBuy.foodIndex}, ${foodToBuy.foodId})`);
+      return false;
     },
 
     // 解析常驻菜：返回 { level, name, currentStock, price, input, buyButton, foodIndex, foodId, element }
