@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.28 metadata and shared panel version", "// @version      3.28" in text and "const SCRIPT_VERSION = '3.28';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.29 metadata and shared panel version", "// @version      3.29" in text and "const SCRIPT_VERSION = '3.29';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel has no stale hardcoded title", "梦想小镇日常 v3.18" not in text and "梦想小镇日常 v3.20" not in text)
 require("panel doubles desktop width", "width:560px" in text and "box-sizing:border-box" in text)
 require("panel control rows use two columns", "#dxzxx-rows,#dxzxx-project-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" in text)
@@ -24,6 +24,7 @@ require("panel details default open", text.count("<details open") >= 5)
 require("panel action buttons use two columns", 'class="panel-actions"' in text and "grid-template-columns:repeat(2,minmax(0,1fr));gap:0 6px" in text)
 require("panel informational lists stay compact", "max-height:112px" in text and "#dxzxx-sched-status{max-height:92px" in text)
 require("panel falls back to one column on narrow screens", "@media (max-width:620px)" in text and "grid-template-columns:1fr" in text)
+require("panel overrides site line height", "font-size:11px;line-height:1.25;width:560px" in text and "font-size:11px;line-height:1.2;" in text)
 require("server time accepts current and legacy labels", "/(?:驯鹿|家园)报时[：:]/" in text)
 require("server clock advances from static page sample", "_serverClockCapturedAt" in text and "localNow - this._serverClockCapturedAt" in text)
 
