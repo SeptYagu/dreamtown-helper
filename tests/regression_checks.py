@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.25 metadata and shared panel version", "// @version      3.25" in text and "const SCRIPT_VERSION = '3.25';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.26 metadata and shared panel version", "// @version      3.26" in text and "const SCRIPT_VERSION = '3.26';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel has no stale hardcoded title", "梦想小镇日常 v3.18" not in text and "梦想小镇日常 v3.20" not in text)
 require("server time accepts current and legacy labels", "/(?:驯鹿|家园)报时[：:]/" in text)
 require("server clock advances from static page sample", "_serverClockCapturedAt" in text and "localNow - this._serverClockCapturedAt" in text)
@@ -150,5 +150,12 @@ require("market removed normalized-date double increment", "next.setHours(next.g
 require("scheduler migration clears every stale plan", "Utils.gset(`sched_${id}_nextAt`, 0);" in text and "scheduler_schema_version', 3" in text)
 require("scheduler migration converts legacy local timestamps", "oldLastRun + serverOffset" in text and "ALL_ENTRIES().forEach" in text)
 require("scheduler migration resets meal window date", "sched_energy_lastWindow', null" in text and "sched_energy_lastResetDay', null" in text)
+require("scheduler watchdog runs every minute", "setInterval(() => this.watchdogTick('60秒巡检'), 60000)" in text)
+require("scheduler watchdog wakes on browser resume", "window.addEventListener('focus'" in text and "document.visibilityState === 'visible'" in text and "window.addEventListener('pageshow'" in text)
+require("scheduler watchdog resumes active phase", "恢复 ${phase.id}/${phase.state}" in text and "await Router.run();" in text)
+require("scheduler watchdog fires overdue home task", "entry.nextRunAt <= nowMs" in text and "await this.fireToTarget(due);" in text)
+require("scheduler watchdog returns orphaned subpage home", "无活动phase但停在 ${path}" in text and "await this.navigateHome();" in text)
+require("enabled scheduler restores watchdog after reload", "if (Scheduler.isOn()) Scheduler.startWatchdog();" in text)
+require("scheduler prevents watchdog timer double fire", "忽略重复触发 ${entry.id}" in text and "const existingPhase = Utils.gget(PHASE_KEY, null);" in text)
 
 print(f"\nAll regression checks passed: {SCRIPT}")

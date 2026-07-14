@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.25
+// @name         梦想小镇日常一体化 v3.26
 // @namespace    http://tampermonkey.net/
-// @version      3.25
+// @version      3.26
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.26 变更（2026-07-14 调度器休眠恢复）
+ * - 新增60秒看门狗及focus/visibility唤醒，恢复浏览器后台冻结后遗失的定时器/Promise
+ * - 自动续跑停滞phase、立即触发主页过期任务，并把无phase子页带回首页
+ *
  * v3.25 变更（2026-07-14 食谱长期目标与轮次分离）
  * - 食谱扫描完成后保留面板目标等级，仅结束当前轮次
  * - Scheduler每24小时及AutoPilot每轮到达食谱前自动开启全新扫描轮次
@@ -176,7 +180,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.25';
+  const SCRIPT_VERSION = '3.26';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -2469,6 +2473,9 @@
   const Scheduler = {
     enabledKey: 'sched_enabled',
     timer: null,
+    watchdogTimer: null,
+    watchdogBusy: false,
+    watchdogListenersBound: false,
 
     isOn() { return !!Utils.gget(this.enabledKey, false); },
 
@@ -2479,6 +2486,7 @@
       }
       Utils.gset(this.enabledKey, true);
       Utils.gset(PHASE_KEY, null);  // 清旧状态
+      this.startWatchdog();
       Utils.log('⏰ 调度器: 启动');
       Utils.showStatus('调度器', '启动中…', '#FF9800');
       if (location.pathname === '/xz/') {
@@ -2492,9 +2500,65 @@
     stop(reason = '') {
       Utils.gset(this.enabledKey, false);
       if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+      if (this.watchdogTimer) { clearInterval(this.watchdogTimer); this.watchdogTimer = null; }
       // 不清 PHASE_KEY：让正在跑的任务能优雅结束
       Utils.log(`⏰ 调度器: 停止${reason ? ' - ' + reason : ''}`);
       Utils.showStatus('调度器', '已停止', '#f44');
+    },
+
+    startWatchdog() {
+      if (this.watchdogTimer) clearInterval(this.watchdogTimer);
+      this.watchdogTimer = setInterval(() => this.watchdogTick('60秒巡检'), 60000);
+      if (!this.watchdogListenersBound) {
+        this.watchdogListenersBound = true;
+        window.addEventListener('focus', () => this.watchdogTick('窗口恢复'));
+        window.addEventListener('pageshow', () => this.watchdogTick('页面恢复'));
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') this.watchdogTick('标签页恢复');
+        });
+      }
+    },
+
+    async watchdogTick(source = '巡检') {
+      if (!this.isOn() || this.watchdogBusy || AutoPilot.isOn()) return;
+      this.watchdogBusy = true;
+      try {
+        const path = location.pathname;
+        const phase = Utils.gget(PHASE_KEY, null);
+        if (phase) {
+          Utils.log(`调度看门狗(${source}): 恢复 ${phase.id}/${phase.state} @ ${path}`);
+          if (phase.state === 'returning' && path !== '/xz/') {
+            await this.navigateHome();
+          } else {
+            // Router会先重跑当前phase对应模块，再由onPageLoad完成running/returning收尾。
+            await Router.run();
+          }
+          return;
+        }
+
+        if (path !== '/xz/') {
+          Utils.log(`调度看门狗(${source}): 无活动phase但停在 ${path}，返回首页`);
+          await this.navigateHome();
+          return;
+        }
+
+        this.computeAll();
+        const nowMs = Utils.getServerTime().getTime();
+        const due = ALL_ENTRIES()
+          .filter(entry => entry.nextRunAt && entry.nextRunAt <= nowMs && isEnabled(entry.module))
+          .sort((a, b) => a.nextRunAt - b.nextRunAt)[0];
+        if (due && !Utils.gget(PHASE_KEY, null)) {
+          if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+          Utils.log(`调度看门狗(${source}): 立即触发过期任务 ${due.id}`);
+          await this.fireToTarget(due);
+        } else {
+          this.scheduleNext();
+        }
+      } catch (error) {
+        Utils.warn(`调度看门狗异常: ${error.message}`);
+      } finally {
+        this.watchdogBusy = false;
+      }
     },
 
     // 每页加载都调一次
@@ -2719,6 +2783,12 @@
     // 触发：在主页点 nav 链接跳到目标页
     async fireToTarget(entry) {
       Utils.log(`调度器: 触发 ${entry.id} → ${entry.target}`);
+
+      const existingPhase = Utils.gget(PHASE_KEY, null);
+      if (existingPhase) {
+        Utils.log(`调度器: 已有 ${existingPhase.id}/${existingPhase.state}，忽略重复触发 ${entry.id}`);
+        return;
+      }
 
       if (location.pathname !== '/xz/') {
         Utils.warn(`调度器: 触发时不在主页 (${location.pathname})，跳过`);
@@ -3127,6 +3197,7 @@
       Utils.gset('scheduler_schema_version', 3);
     }
     Panel.create();
+    if (Scheduler.isOn()) Scheduler.startWatchdog();
     // 主页加载：若 AutoPilot 开着，显示状态
     if (AutoPilot.isOn()) {
       const state = Utils.gget('autopilot_state', {});
