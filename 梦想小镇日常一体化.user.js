@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.30
+// @name         梦想小镇日常一体化 v3.31
 // @namespace    http://tampermonkey.net/
-// @version      3.30
+// @version      3.31
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -180,7 +180,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.30';
+  const SCRIPT_VERSION = '3.31';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -394,31 +394,28 @@
     create() {
       if (document.getElementById('dxzxx-panel')) return;
       GM_addStyle(`
-        #dxzxx-panel{position:fixed;top:10px;right:10px;z-index:99999;background:rgba(255,255,255,.97);border:1px solid #ccc;border-radius:8px;padding:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);font-size:11px;line-height:1.25;width:560px;box-sizing:border-box;font-family:Arial,sans-serif;max-height:calc(100vh - 20px);overflow-y:auto;}
-        #dxzxx-panel h3{margin:0 0 4px;font-size:14px;line-height:1.2;border-bottom:1px solid #eee;padding-bottom:4px;color:#333;}
-        #dxzxx-panel .row{display:flex;justify-content:space-between;align-items:center;gap:4px;padding:0;min-width:0;font-size:11px;line-height:1.2;}
+        #dxzxx-panel{position:fixed;top:10px;right:10px;z-index:99999;background:rgba(255,255,255,.97);border:1px solid #ccc;border-radius:8px;padding:6px;box-shadow:0 4px 16px rgba(0,0,0,.15);font-size:12px;line-height:1.25;width:560px;box-sizing:border-box;font-family:Arial,sans-serif;max-height:calc(100vh - 20px);overflow-y:auto;}
+        #dxzxx-panel h3{margin:0 0 3px;font-size:15px;line-height:1.2;border-bottom:1px solid #eee;padding-bottom:3px;color:#333;}
+        #dxzxx-panel .row{display:flex;justify-content:space-between;align-items:center;gap:4px;padding:1px 0;min-width:0;font-size:12px;line-height:1.2;}
         #dxzxx-panel .row label{cursor:pointer;flex:1;}
-        #dxzxx-panel .toggle{padding:1px 6px;border-radius:10px;font-size:10px;cursor:pointer;user-select:none;border:1px solid transparent;flex:0 0 auto;}
+        #dxzxx-panel .toggle{padding:1px 7px;border-radius:10px;font-size:11px;cursor:pointer;user-select:none;border:1px solid transparent;flex:0 0 auto;}
         #dxzxx-panel .toggle.on{background:#d4f7d4;color:#1a7a1a;border-color:#1a7a1a;}
         #dxzxx-panel .toggle.off{background:#f7d4d4;color:#a71a1a;border-color:#a71a1a;}
-        #dxzxx-panel button{width:100%;padding:5px;margin-top:4px;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:11px;line-height:1.2;}
+        #dxzxx-panel button{width:100%;padding:5px;margin-top:3px;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:12px;line-height:1.2;}
         #dxzxx-panel .run-btn{background:#4CAF50;color:white;}
         #dxzxx-panel .hide-btn{background:#eee;color:#666;margin-top:4px;}
-        #dxzxx-panel .sub{padding-left:8px;font-size:10px;color:#666;}
-        #dxzxx-panel details{margin-top:2px;padding-top:2px;border-top:1px solid #eee;font-size:11px;line-height:1.25;}
+        #dxzxx-panel .sub{padding-left:8px;font-size:11px;color:#666;}
+        #dxzxx-panel details{margin-top:2px;padding-top:2px;border-top:1px solid #eee;font-size:12px;line-height:1.25;}
         #dxzxx-panel summary{cursor:pointer;font-weight:bold;line-height:1.25;}
-        #dxzxx-panel select{width:100%;padding:3px;margin:3px 0;border:1px solid #ccc;border-radius:4px;font-size:11px;}
-        #dxzxx-panel .project-count{width:40px;padding:1px 2px;border:1px solid #bbb;border-radius:3px;font-size:10px;text-align:center;margin:0 2px;}
-        #dxzxx-panel .project-row label{font-size:10px;line-height:1.15;}
-        #dxzxx-panel .label{font-size:10px;color:#555;margin-top:2px;}
+        #dxzxx-panel select{width:100%;padding:3px;margin:3px 0;border:1px solid #ccc;border-radius:4px;font-size:12px;}
+        #dxzxx-panel .project-count{width:40px;padding:1px 2px;border:1px solid #bbb;border-radius:3px;font-size:11px;text-align:center;margin:0 2px;}
+        #dxzxx-panel .project-row label{font-size:11px;line-height:1.15;}
+        #dxzxx-panel .label{font-size:11px;color:#555;margin-top:2px;}
         #dxzxx-rows,#dxzxx-project-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:14px;}
         #dxzxx-panel .panel-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start;}
         #dxzxx-panel .panel-column{min-width:0;}
         #dxzxx-panel .panel-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 6px;}
-        #dxzxx-panel .plan-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:6px;font-size:9px;color:#333;padding:3px;line-height:1.2;max-height:72px;overflow-y:auto;background:#f9f9f9;border-radius:4px;margin-top:2px;}
-        #dxzxx-panel .plan-list .step{display:flex;justify-content:space-between;padding:1px 3px;min-width:0;}
-        #dxzxx-panel .plan-list .step.current{background:#FFE082;font-weight:bold;border-radius:3px;}
-        #dxzxx-panel .plan-list .step.disabled{color:#aaa;text-decoration:line-through;}
+        #dxzxx-panel #dxzxx-rows .row.current{background:#FFE082;border-radius:3px;font-weight:bold;}
         #dxzxx-sched-wrap>div{line-height:1.25;}
         #dxzxx-sched-status{max-height:54px;overflow-y:auto;}
         #dxzxx-sched-list{display:none;}
@@ -428,12 +425,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v${SCRIPT_VERSION}</h3><div id="dxzxx-rows"></div>
-        <details open>
-          <summary>每日项目（早饭后执行）</summary>
-          <div id="dxzxx-project-rows"></div>
-          <div class="label">按服务器06:00重置；次数按成功动作记账。搬家不执行。</div>
-        </details>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v${SCRIPT_VERSION}</h3>
         <div class="panel-columns">
           <div class="panel-column">
             <details open>
@@ -466,14 +458,10 @@
             </div>
           </div>
           <div class="panel-column">
-            <details open>
-              <summary>自动驾驶流程（${AutoPilot.PLAN.length} 步）</summary>
-              <div id="dxzxx-plan-list" class="plan-list"></div>
-            </details>
             <details open id="dxzxx-sched-wrap">
-              <summary style="cursor:pointer;color:#fff;font-size:12px;padding:4px;background:rgba(255,152,0,0.25);border-radius:4px;">⏰ 长期循环调度器</summary>
+              <summary style="cursor:pointer;color:#fff;font-size:13px;padding:4px;background:rgba(255,152,0,0.25);border-radius:4px;">⏰ 长期循环调度器</summary>
               <div style="padding:4px;background:rgba(0,0,0,0.15);border-radius:4px;margin-top:3px;">
-                <div id="dxzxx-sched-status" style="font-size:10px;color:#fff;margin-bottom:3px;line-height:1.3;">⏸ 未启动</div>
+                <div id="dxzxx-sched-status" style="font-size:11px;color:#fff;margin-bottom:3px;line-height:1.3;">⏸ 未启动</div>
                 <div id="dxzxx-sched-list"></div>
                 <div class="panel-actions">
                   <button class="run-btn" id="dxzxx-sched" style="background:#FF9800;color:#000;">⏰ 启动调度器</button>
@@ -483,15 +471,28 @@
             </details>
           </div>
         </div>
+        <details open>
+          <summary>每日项目（早饭后执行）</summary>
+          <div id="dxzxx-project-rows"></div>
+          <div class="label">按服务器06:00重置；次数按成功动作记账。搬家不执行。</div>
+        </details>
+        <details open id="dxzxx-module-switches">
+          <summary>自动驾驶功能开关（按${AutoPilot.PLAN.length}步顺序）</summary>
+          <div id="dxzxx-rows"></div>
+        </details>
         <button class="hide-btn" id="dxzxx-hide">收起</button>`;
       document.body.appendChild(panel);
 
       const rows = panel.querySelector('#dxzxx-rows');
-      MODULE_DEFS.filter(m => !m.hidden).forEach(m => {
+      const planOrder = new Map(AutoPilot.PLAN.map((step, index) => [step.module, index]));
+      MODULE_DEFS.filter(m => !m.hidden).sort((a, b) => (planOrder.get(a.id) ?? 999) - (planOrder.get(b.id) ?? 999)).forEach(m => {
         const enabled = isEnabled(m.id);
         const row = document.createElement('div');
         row.className = 'row';
-        row.innerHTML = `<label>${m.label}</label><span class="toggle ${enabled ? 'on' : 'off'}" data-id="${m.id}">${enabled ? '开' : '关'}</span>`;
+        row.dataset.module = m.id;
+        const stepNumber = (planOrder.get(m.id) ?? -1) + 1;
+        const label = m.label.replace(/^\d+\.\s*/, '');
+        row.innerHTML = `<label>${stepNumber > 0 ? `${stepNumber}. ` : ''}${label}</label><span class="toggle ${enabled ? 'on' : 'off'}" data-id="${m.id}">${enabled ? '开' : '关'}</span>`;
         rows.appendChild(row);
       });
 
@@ -658,20 +659,14 @@
       Panel.refreshPlanList();
     },
 
-    // 渲染 PLAN 顺序列表
+    // 独立19步预览已合并进功能开关；运行时在对应开关行标出当前步骤。
     refreshPlanList() {
-      const list = document.getElementById('dxzxx-plan-list');
-      if (!list || typeof AutoPilot === 'undefined') return;
+      const rows = document.querySelectorAll('#dxzxx-rows .row[data-module]');
+      if (!rows.length || typeof AutoPilot === 'undefined') return;
       const state = Utils.gget('autopilot_state', {});
       const curStep = state.enabled ? (state.stepIndex || 0) : -1;
-      const html = AutoPilot.PLAN.map((s, i) => {
-        const enabled = isEnabled(s.module);
-        const cls = [];
-        if (i === curStep) cls.push('current');
-        if (!enabled) cls.push('disabled');
-        return `<div class="step ${cls.join(' ')}"><span>${i + 1}. ${s.module}</span><span>${enabled ? '✅' : '⏸'}</span></div>`;
-      }).join('');
-      list.innerHTML = html;
+      const currentModule = curStep >= 0 ? AutoPilot.PLAN[curStep]?.module : null;
+      rows.forEach(row => row.classList.toggle('current', row.dataset.module === currentModule));
     },
 
     refreshSchedUI() {
