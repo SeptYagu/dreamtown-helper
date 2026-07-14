@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.49
+// @name         梦想小镇日常一体化 v3.50
 // @namespace    http://tampermonkey.net/
-// @version      3.49
+// @version      3.50
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.50 变更（2026-07-15 自动驾驶连续编号与领奖收尾）
+ * - 自动驾驶列表补齐邮箱引用行，并把食神、菜园姐、雯姐统一纳入“拜访NPC”一轮
+ * - 每日项目合并为一个显示步骤，面板按16项连续编号；今日活跃领奖最后收尾
+ *
  * v3.49 变更（2026-07-15 自动驾驶餐厅提前）
  * - 餐厅管理由第15步提前到第2步，餐厅后系统邮箱继续紧随其后作为第3步
  * - 原第2至14步顺次后移，面板编号自动跟随真实AutoPilot顺序
@@ -256,7 +260,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.49';
+  const SCRIPT_VERSION = '3.50';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -377,7 +381,6 @@
     // —— 面板主模块 ——
     { id: 'signIn',     label: '1. 每日签到',     default: true,  schedule: 'daily' },
     { id: 'wish',       label: '2. 许愿树(免费)', default: true,  schedule: 'daily' },
-    { id: 'god',        label: '3. 食神拜访',     default: true,  schedule: 'daily' },
     { id: 'box',        label: '4. 免费宝箱',     default: true,  schedule: 'daily' },
     { id: 'season',     label: '5. 季节签到',     default: true,  schedule: 'daily' },
     { id: 'egg',        label: '6. 免费扭蛋',     default: true,  schedule: 'daily' },
@@ -424,7 +427,7 @@
     { id: 'npc', label: '拜访NPC（推荐1轮）', recommended: 1, module: 'dailyNpc' },
     { id: 'extraWish', label: '额外许愿果（常驻推荐0次）', recommended: 0, module: 'extraWish' },
   ];
-  // 从 v3.32 的“拜访雯姐”开关迁移；次数升级为两个 NPC 各一次。
+  // 从 v3.32 的“拜访雯姐”开关迁移；一轮现统一处理食神、菜园姐与雯姐。
   if (Utils.gget('project_npc_enabled', null) === null && Utils.gget('project_wenjie_enabled', null) !== null) {
     Utils.gset('project_npc_enabled', !!Utils.gget('project_wenjie_enabled', true));
   }
@@ -458,7 +461,7 @@
     project_fist: { module: 'dailyBar', navSteps: [{ text: '广场', hrefMatch: '/xz/square' }, { text: '酒吧', hrefMatch: '/xz/bar' }] },
     project_cup: { module: 'dailyBar', navSteps: [{ text: '广场', hrefMatch: '/xz/square' }, { text: '酒吧', hrefMatch: '/xz/bar' }] },
     project_number: { module: 'dailyBar', navSteps: [{ text: '广场', hrefMatch: '/xz/square' }, { text: '酒吧', hrefMatch: '/xz/bar' }] },
-    project_npc: { module: 'dailyNpc', navSteps: [{ text: '菜场', hrefMatch: '/xz/market' }] },
+    project_npc: { module: 'dailyNpc', navSteps: [{ text: '食神', hrefMatch: '/xz/god' }] },
     project_extraWish: { module: 'extraWish', navSteps: [{ text: '许愿', hrefMatch: '/xz/wish' }] },
   };
   const activeActionScope = (moduleId = null) => {
@@ -534,6 +537,8 @@
         #dxzxx-stop{grid-column:1/-1;}
         #dxzxx-panel .action-run{width:auto;padding:1px 5px;margin:0;background:#4CAF50;color:#fff;font-size:11px;font-weight:normal;flex:0 0 auto;}
         #dxzxx-panel .single-run{width:auto;padding:1px 7px;margin:0;background:#4CAF50;color:#fff;font-size:11px;font-weight:normal;flex:0 0 auto;}
+        #dxzxx-panel .plan-ref{font-size:10px;color:#888;white-space:nowrap;flex:0 0 auto;}
+        #dxzxx-panel .plan-reference{background:rgba(255,255,255,.035);border-radius:3px;}
         #dxzxx-panel #dxzxx-rows .row.current{background:#FFE082;border-radius:3px;font-weight:bold;}
         #dxzxx-sched-wrap>div{line-height:1.25;}
         #dxzxx-sched-status{height:110px;max-height:110px;overflow-y:auto;box-sizing:border-box;}
@@ -596,7 +601,7 @@
           <div class="label">按服务器06:00重置；次数按成功动作记账。搬家不执行。</div>
         </details>
         <details open id="dxzxx-module-switches">
-          <summary>自动驾驶功能开关（按${AutoPilot.PLAN.length}步顺序）</summary>
+          <summary>自动驾驶功能开关（按执行顺序）</summary>
           <div id="dxzxx-rows"></div>
         </details>
         <button class="hide-btn" id="dxzxx-hide">收起</button>`;
@@ -605,15 +610,40 @@
       document.body.appendChild(panel);
 
       const rows = panel.querySelector('#dxzxx-rows');
-      const planOrder = new Map(AutoPilot.PLAN.map((step, index) => [step.module, index]));
-      MODULE_DEFS.filter(m => !m.hidden).sort((a, b) => (planOrder.get(a.id) ?? 999) - (planOrder.get(b.id) ?? 999)).forEach(m => {
+      const planReferenceLabels = {
+        mailbox: '餐厅后系统邮箱',
+      };
+      const dailyProjectModules = ['dailyNpc', 'dailyFriend', 'dailyBar', 'extraWish'];
+      let displayStep = 0;
+      AutoPilot.PLAN.forEach((step, index) => {
+        const m = MODULE_DEFS.find(def => def.id === step.module);
+        if (dailyProjectModules.includes(step.module)) {
+          if (step.module !== dailyProjectModules[0]) return;
+          displayStep++;
+          const row = document.createElement('div');
+          row.className = 'row plan-reference';
+          row.dataset.modules = dailyProjectModules.join(',');
+          row.innerHTML = `<label>${displayStep}. 每日项目</label><span class="plan-ref">见上方每日项目配置</span>`;
+          rows.appendChild(row);
+          return;
+        }
+        displayStep++;
+        if (!m || m.hidden) {
+          const row = document.createElement('div');
+          row.className = 'row plan-reference';
+          row.dataset.module = step.module;
+          const label = planReferenceLabels[step.module] || m?.label || step.module;
+          const reference = step.module === 'mailbox' ? '见左上餐厅子开关' : '见上方配置';
+          row.innerHTML = `<label>${displayStep}. ${label}</label><span class="plan-ref">${reference}</span>`;
+          rows.appendChild(row);
+          return;
+        }
         const enabled = isEnabled(m.id);
         const row = document.createElement('div');
         row.className = 'row';
         row.dataset.module = m.id;
-        const stepNumber = (planOrder.get(m.id) ?? -1) + 1;
         const label = m.label.replace(/^\d+\.\s*/, '');
-        row.innerHTML = `<label>${stepNumber > 0 ? `${stepNumber}. ` : ''}${label}</label><button class="single-run" data-run-module="${m.id}">运行</button><span class="toggle ${enabled ? 'on' : 'off'}" data-id="${m.id}">${enabled ? '开' : '关'}</span>`;
+        row.innerHTML = `<label>${displayStep}. ${label}</label><button class="single-run" data-run-module="${m.id}">运行</button><span class="toggle ${enabled ? 'on' : 'off'}" data-id="${m.id}">${enabled ? '开' : '关'}</span>`;
         rows.appendChild(row);
       });
 
@@ -794,14 +824,17 @@
       Panel.refreshPlanList();
     },
 
-    // 独立19步预览已合并进功能开关；运行时在对应开关行标出当前步骤。
+    // 自动驾驶预览已合并进功能开关；运行时在对应显示行标出当前步骤。
     refreshPlanList() {
-      const rows = document.querySelectorAll('#dxzxx-rows .row[data-module]');
+      const rows = document.querySelectorAll('#dxzxx-rows .row[data-module], #dxzxx-rows .row[data-modules]');
       if (!rows.length || typeof AutoPilot === 'undefined') return;
       const state = Utils.gget('autopilot_state', {});
       const curStep = state.enabled ? (state.stepIndex || 0) : -1;
       const currentModule = curStep >= 0 ? AutoPilot.PLAN[curStep]?.module : null;
-      rows.forEach(row => row.classList.toggle('current', row.dataset.module === currentModule));
+      rows.forEach(row => {
+        const modules = row.dataset.modules ? row.dataset.modules.split(',') : [row.dataset.module];
+        row.classList.toggle('current', modules.includes(currentModule));
+      });
     },
 
     refreshSchedUI() {
@@ -1214,27 +1247,7 @@
     },
   };
 
-  // ----- 5. 食神拜访（v2: see() 而非 seeGod()）-----
-  MOD.god = {
-    match: (p) => p === '/xz/god',
-    schedule: 'daily',
-    async run() {
-      // 实际按钮: a[onclick="see()"] 文本"拜访食神"
-      const btn = document.querySelector('a[onclick="see()"]') ||
-                  Utils.findByText('a', '拜访食神');
-      if (!btn) {
-        Utils.log('食神: 今日已拜访');
-        Utils.showStatus('食神', '今日已完成');
-        return true;
-      }
-      await Utils.sleep(Utils.randMs(1, 2));
-      Utils.click(btn);
-      Utils.log('食神: 已点击拜访');
-      return false;
-    },
-  };
-
-  // ----- 6. 食材采购（特价 + 常驻菜补货）-----
+  // ----- 5. 食材采购（特价 + 常驻菜补货）-----
   // 整合自原 v5.3 整点食材采购助手的关键逻辑：
   //   1) 特价（buyDiscountFood，6-23 整点刷新）— 全买
   //   2) 每日菜场（当前 buyDayFood；兼容旧 buyFood）— 库存 < 950 时补到 950
@@ -2640,9 +2653,9 @@
     },
   };
 
-  // 每日 NPC：一轮内依次处理菜场菜园姐、酒吧雯姐；两位都完成才记1轮。
+  // 每日 NPC：一轮内依次处理食神、菜场菜园姐、酒吧雯姐；三位都完成才记1轮。
   MOD.dailyNpc = {
-    match: (p) => ['/xz/', '/xz/market', '/xz/square', '/xz/bar'].includes(p),
+    match: (p) => ['/xz/', '/xz/god', '/xz/market', '/xz/square', '/xz/bar'].includes(p),
     schedule: 'daily-project',
     requiresScheduled: true,
     async run() {
@@ -2655,10 +2668,10 @@
         }
       };
       const syncRound = () => {
-        const complete = ['garden', 'wenjie'].every(id => state.visited.includes(id));
-        // 修复v3.33在只处理菜园姐后就把一次拜访误记成完成的状态。
+        const complete = ['god', 'garden', 'wenjie'].every(id => state.visited.includes(id));
+        // 修正旧版本只处理部分 NPC 后就把一次拜访误记成完成的状态。
         state.counts.npc = complete ? 1 : 0;
-        if (complete) Utils.log('每日NPC: 菜园姐与雯姐均已处理，本轮完成 1/1');
+        if (complete) Utils.log('每日NPC: 食神、菜园姐与雯姐均已处理，本轮完成 1/1');
         return complete;
       };
 
@@ -2687,7 +2700,7 @@
         const button = Array.from(document.querySelectorAll('a[onclick="see()"]'))
           .find(a => a.textContent.trim() === `拜访${label}`);
         if (!button) {
-          // 拜访按钮消失是服务端的每日已完成态；同步本地进度后继续另一位 NPC。
+          // 拜访按钮消失是服务端的每日已完成态；同步本地进度后继续下一位 NPC。
           markVisited(npcId, label);
           syncRound();
           DailyProjectState.save('npc', state);
@@ -2701,7 +2714,12 @@
         return true;
       };
 
-      if (location.pathname === '/xz/') return (await go('/xz/market')) ? false : true;
+      if (location.pathname === '/xz/') return (await go('/xz/god')) ? false : true;
+      if (location.pathname === '/xz/god') {
+        if (await visitHere('god', '食神')) return false;
+        if (DailyProjectState.remaining('npc', state) <= 0) return true;
+        return (await go('/xz/market')) ? false : true;
+      }
       if (location.pathname === '/xz/market') {
         if (await visitHere('garden', '菜园姐')) return false;
         if (DailyProjectState.remaining('npc', state) <= 0) return true;
@@ -2956,7 +2974,6 @@
     // 每日 7:30 ± 15min 一次性（runOnce）
     { id: 'signIn',  module: 'signIn',  target: '/xz/sign_in',         nav: '签到',             slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 5000 },
     { id: 'wish',    module: 'wish',    target: '/xz/wish',            nav: '许愿',             slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 15000 },
-    { id: 'god',     module: 'god',     target: '/xz/god',             nav: '食神',             slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 5000 },
     { id: 'box',     module: 'box',     target: '/xz/box',             nav: '酒吧', route: [{ text: '酒吧', href: '/xz/bar' }, { text: '开宝箱', href: '/xz/box' }], slot: '7:30', jitterMin: 0, jitterMax: 15, runOnce: true, runMs: 8000 },
     { id: 'foodCoupon', module: 'foodCoupon', target: '/xz/warehouse', nav: '仓库', slot: '7:30', jitterMin: 0, jitterMax: 15, runOnce: true, runMs: 30000 },
     { id: 'bag',     module: 'bag',     target: '/xz/warehouse_2_0',   nav: '仓库', route: [{ text: '仓库', href: '/xz/warehouse' }, { text: '礼包', href: '/xz/warehouse_2_0' }], slot: '7:30', jitterMin: 0, jitterMax: 15, runOnce: true, runMs: 8000 },
@@ -2964,7 +2981,7 @@
     // 早饭后每日项目。资源项目用独立面板开关/次数控制，搬家不纳入。
     { id: 'vitalityProbe', module: 'vitality', target: '/xz/restaurant_vitality', nav: '今日活跃', slot: '7:40', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 5000 },
     { id: 'dailyFriend', module: 'dailyFriend', target: '/xz/friend', nav: '好友', route: [{ text: '好友', href: '/xz/friend' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 180000 },
-    { id: 'dailyNpc', module: 'dailyNpc', target: '/xz/market', nav: '菜场', route: [{ text: '菜场', href: '/xz/market' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 30000 },
+    { id: 'dailyNpc', module: 'dailyNpc', target: '/xz/god', nav: '食神', route: [{ text: '食神', href: '/xz/god' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 45000 },
     { id: 'dailyBar', module: 'dailyBar', target: '/xz/bar', nav: '广场', route: [{ text: '广场', href: '/xz/square' }, { text: '酒吧', href: '/xz/bar' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 180000 },
     { id: 'extraWish', module: 'extraWish', target: '/xz/wish', nav: '许愿', slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 60000 },
 
@@ -3607,18 +3624,15 @@
       { module: 'restaurant', navSteps: [{ text: '餐厅',                hrefMatch: '/xz/restaurant' }] },
       { module: 'mailbox',    navSteps: [{ text: '邮箱',                 hrefMatch: '/xz/mailbox' }] },
       { module: 'wish',       navSteps: [{ text: '许愿',                hrefMatch: '/xz/wish' }] },
-      { module: 'god',        navSteps: [{ text: '食神',                hrefMatch: '/xz/god' }] },
       { module: 'box',        navSteps: [{ text: '酒吧',                hrefMatch: '/xz/bar' },
                                          { text: '开宝箱',              hrefMatch: '/xz/box' }] },
       { module: 'foodCoupon', navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' }] },
       { module: 'market',     navSteps: [{ text: '菜场',                hrefMatch: '/xz/market' }] },
-      { module: 'dailyNpc',   navSteps: [{ text: '菜场',                hrefMatch: '/xz/market' }] },
+      { module: 'dailyNpc',   navSteps: [{ text: '食神',                hrefMatch: '/xz/god' }] },
       { module: 'dailyFriend', navSteps: [{ text: '好友',               hrefMatch: '/xz/friend' }] },
       { module: 'dailyBar',   navSteps: [{ text: '广场',                hrefMatch: '/xz/square' },
                                          { text: '酒吧',                hrefMatch: '/xz/bar' }] },
       { module: 'extraWish',  navSteps: [{ text: '许愿',                hrefMatch: '/xz/wish' }] },
-      { module: 'season',     navSteps: [{ text: '>>夏日签到活动<<',    hrefMatch: '/xz/activity_season' }] },
-      { module: 'egg',        navSteps: [{ text: '>>小镇扭蛋活动<<',    hrefMatch: '/xz/activity_egg' }] },
       { module: 'energy',     navSteps: [{ text: '吃饭活动',            hrefMatch: '/xz/activity_energy' }] },
       { module: 'facility',   navSteps: [{ text: '设施',                hrefMatch: '/xz/restaurant_facility' }] },
       { module: 'bag',        navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' },
@@ -3627,6 +3641,8 @@
                                          { text: '可升级',              hrefPattern: '^/xz/cookbook_\\d+_3_1$' }] },
       { module: 'guardian',   navSteps: [{ text: '神殿',                hrefMatch: '/xz/temple' },
                                          { text: '守护者',              hrefMatch: '/xz/guardian' }] },
+      { module: 'season',     navSteps: [{ text: '>>夏日签到活动<<',    hrefMatch: '/xz/activity_season' }] },
+      { module: 'egg',        navSteps: [{ text: '>>小镇扭蛋活动<<',    hrefMatch: '/xz/activity_egg' }] },
       { module: 'vitality',   navSteps: [{ text: '今日活跃',            hrefMatch: '/xz/restaurant_vitality' }] },
     ],
     stateKey: 'autopilot_state',
