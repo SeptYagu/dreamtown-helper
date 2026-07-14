@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.40
+// @name         梦想小镇日常一体化 v3.41
 // @namespace    http://tampermonkey.net/
-// @version      3.40
+// @version      3.41
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.41 变更（2026-07-14 全面细项运行）
+ * - 删除Esc键监听，总停止仅接受面板鼠标点击
+ * - 餐厅子项、食谱学习与8个每日项目全部增加独立运行键
+ * - 组合模块新增跨页actionScope，独立运行只执行所点细项且不改长期开关
+ *
  * v3.40 变更（2026-07-14 常驻总停止）
  * - “停止当前操作”按钮永久占位，不再因AutoPilot启动而插入并推动布局
  * - 总停止会中止AutoPilot/Scheduler、清当前phase并锁住后续脚本点击
@@ -215,7 +220,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.40';
+  const SCRIPT_VERSION = '3.41';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -405,6 +410,32 @@
     return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}-${String(shifted.getDate()).padStart(2, '0')}`;
   };
 
+  // 面板细项的独立运行定义。actionScope跨页面保存在AutoPilot状态中，父模块据此只执行目标细项。
+  const ACTION_RUN_DEFS = {
+    restaurant_cockroach: { module: 'restaurant', navSteps: [{ text: '餐厅', hrefMatch: '/xz/restaurant' }] },
+    restaurant_oil: { module: 'restaurant', navSteps: [{ text: '餐厅', hrefMatch: '/xz/restaurant' }] },
+    restaurant_mailbox: { module: 'mailbox', navSteps: [{ text: '邮箱', hrefMatch: '/xz/mailbox' }] },
+    recipe_learn: { module: 'recipe', navSteps: [{ text: '食谱', hrefMatch: '/xz/cookbook' }, { text: '全部', hrefPattern: '^/xz/cookbook_\\d+_0_1$' }] },
+    project_like: { module: 'dailyFriend', navSteps: [{ text: '好友', hrefMatch: '/xz/friend' }] },
+    project_dig: { module: 'dailyFriend', navSteps: [{ text: '好友', hrefMatch: '/xz/friend' }] },
+    project_roach: { module: 'dailyFriend', navSteps: [{ text: '好友', hrefMatch: '/xz/friend' }] },
+    project_fist: { module: 'dailyBar', navSteps: [{ text: '广场', hrefMatch: '/xz/square' }, { text: '酒吧', hrefMatch: '/xz/bar' }] },
+    project_cup: { module: 'dailyBar', navSteps: [{ text: '广场', hrefMatch: '/xz/square' }, { text: '酒吧', hrefMatch: '/xz/bar' }] },
+    project_number: { module: 'dailyBar', navSteps: [{ text: '广场', hrefMatch: '/xz/square' }, { text: '酒吧', hrefMatch: '/xz/bar' }] },
+    project_npc: { module: 'dailyNpc', navSteps: [{ text: '菜场', hrefMatch: '/xz/market' }] },
+    project_extraWish: { module: 'extraWish', navSteps: [{ text: '许愿', hrefMatch: '/xz/wish' }] },
+  };
+  const activeActionScope = (moduleId = null) => {
+    const state = Utils.gget('autopilot_state', null);
+    if (!state?.enabled || !state.actionScope) return null;
+    if (moduleId && state.singleModule !== moduleId) return null;
+    return state.actionScope;
+  };
+  const actionEnabled = (moduleId, actionId, normalEnabled) => {
+    const scope = activeActionScope(moduleId);
+    return scope ? scope === actionId : normalEnabled;
+  };
+
   // 餐厅子开关
   const RESTAURANT_SUB_DEFAULTS = {
     restaurant_cockroach: false,
@@ -449,6 +480,7 @@
         #dxzxx-panel .panel-column{min-width:0;}
         #dxzxx-panel .panel-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 6px;}
         #dxzxx-stop{grid-column:1/-1;}
+        #dxzxx-panel .action-run{width:auto;padding:1px 5px;margin:0;background:#4CAF50;color:#fff;font-size:11px;font-weight:normal;flex:0 0 auto;}
         #dxzxx-panel .single-run{width:auto;padding:1px 7px;margin:0;background:#4CAF50;color:#fff;font-size:11px;font-weight:normal;flex:0 0 auto;}
         #dxzxx-panel #dxzxx-rows .row.current{background:#FFE082;border-radius:3px;font-weight:bold;}
         #dxzxx-sched-wrap>div{line-height:1.25;}
@@ -467,9 +499,9 @@
           <div class="panel-column">
             <details open>
               <summary>餐厅子开关</summary>
-              <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
-              <div class="row sub"><label>⛽ 自动添油</label><span class="toggle ${Utils.gget('restaurant_oil', true) ? 'on' : 'off'}" data-sub="restaurant_oil">${Utils.gget('restaurant_oil', true) ? '开' : '关'}</span></div>
-              <div class="row sub"><label>📬 餐厅后领取系统邮件</label><span class="toggle ${Utils.gget('restaurant_mailbox', true) ? 'on' : 'off'}" data-sub="restaurant_mailbox">${Utils.gget('restaurant_mailbox', true) ? '开' : '关'}</span></div>
+              <div class="row sub"><label>🪳 自动打蟑螂</label><button class="action-run" data-run-action="restaurant_cockroach">运行</button><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
+              <div class="row sub"><label>⛽ 自动添油</label><button class="action-run" data-run-action="restaurant_oil">运行</button><span class="toggle ${Utils.gget('restaurant_oil', true) ? 'on' : 'off'}" data-sub="restaurant_oil">${Utils.gget('restaurant_oil', true) ? '开' : '关'}</span></div>
+              <div class="row sub"><label>📬 餐厅后领取系统邮件</label><button class="action-run" data-run-action="restaurant_mailbox">运行</button><span class="toggle ${Utils.gget('restaurant_mailbox', true) ? 'on' : 'off'}" data-sub="restaurant_mailbox">${Utils.gget('restaurant_mailbox', true) ? '开' : '关'}</span></div>
             </details>
             <details open>
               <summary>食谱升级配置</summary>
@@ -484,12 +516,12 @@
                 <option value="金牌4级">升级到金牌4级</option>
                 <option value="金牌5级">升级到金牌5级</option>
               </select>
-              <div class="row sub"><label>📖 自动学习新食谱</label><span class="toggle ${Utils.gget('recipe_learn', true) ? 'on' : 'off'}" data-sub="recipe_learn">${Utils.gget('recipe_learn', true) ? '开' : '关'}</span></div>
+              <div class="row sub"><label>📖 自动学习新食谱</label><button class="action-run" data-run-action="recipe_learn">运行</button><span class="toggle ${Utils.gget('recipe_learn', true) ? 'on' : 'off'}" data-sub="recipe_learn">${Utils.gget('recipe_learn', true) ? '开' : '关'}</span></div>
             </details>
             <div class="panel-actions">
               <button class="run-btn" id="dxzxx-run">▶ 立即执行本页</button>
               <button class="run-btn" id="dxzxx-autopilot" style="background:#FF9800;color:#000;">🚀 立即跑一轮全套</button>
-              <button class="run-btn" id="dxzxx-stop" style="background:#f44;color:#fff;">⏹ 停止当前操作（Esc）</button>
+              <button class="run-btn" id="dxzxx-stop" style="background:#f44;color:#fff;">⏹ 停止当前操作</button>
             </div>
           </div>
           <div class="panel-column">
@@ -538,7 +570,7 @@
         const enabled = projectEnabled(p.id);
         const row = document.createElement('div');
         row.className = 'row project-row';
-        row.innerHTML = `<label>${p.label}</label><input class="project-count" type="number" min="0" max="${p.id === 'npc' ? 1 : 500}" value="${projectTarget(p.id)}" data-project-count="${p.id}"><span class="toggle ${enabled ? 'on' : 'off'}" data-project="${p.id}">${enabled ? '开' : '关'}</span>`;
+        row.innerHTML = `<label>${p.label}</label><input class="project-count" type="number" min="0" max="${p.id === 'npc' ? 1 : 500}" value="${projectTarget(p.id)}" data-project-count="${p.id}"><button class="action-run" data-run-action="project_${p.id}">运行</button><span class="toggle ${enabled ? 'on' : 'off'}" data-project="${p.id}">${enabled ? '开' : '关'}</span>`;
         projectRows.appendChild(row);
       });
 
@@ -598,6 +630,12 @@
           Panel.refreshAutopilotUI();
         });
       });
+      panel.querySelectorAll('[data-run-action]').forEach(button => {
+        button.addEventListener('click', () => {
+          AutoPilot.startAction(button.dataset.runAction);
+          Panel.refreshAutopilotUI();
+        });
+      });
 
       // 食谱等级下拉
       const recipeLevel = panel.querySelector('#dxzxx-recipe-level');
@@ -639,10 +677,6 @@
           Scheduler.start();
         }
         Panel.refreshSchedUI();
-      });
-      // Esc 紧急停止（同时停 AutoPilot 和 Scheduler）
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') Panel.stopCurrentOperation('Esc 紧急停止');
       });
       panel.querySelector('#dxzxx-sched-refresh').addEventListener('click', () => {
         Scheduler.computeAll();
@@ -1295,7 +1329,7 @@
 
     // 每页先处理直接显示的蟑螂；当前自家1楼就是 /xz/restaurant，而不是 restaurant_<uid>_1。
     async killCurrentRoach() {
-      if (!Utils.gget('restaurant_cockroach', false)) return false;
+      if (!actionEnabled('restaurant', 'restaurant_cockroach', Utils.gget('restaurant_cockroach', false))) return false;
       const resultText = document.body.textContent || '';
       const attempts = Utils.gget('restaurant_roach_attempts', 0);
       if (/体力不足|打蟑螂失败|无法继续打/.test(resultText)) {
@@ -1323,7 +1357,7 @@
 
       if (await this.killCurrentRoach()) return false;
 
-      if (!Utils.gget('restaurant_cockroach', false)) {
+      if (!actionEnabled('restaurant', 'restaurant_cockroach', Utils.gget('restaurant_cockroach', false))) {
         Utils.log('餐厅: 蟑螂开关关，跳过楼层扫描');
         Utils.gset('restaurant_remaining_floors', []);
         return true;
@@ -1361,7 +1395,7 @@
 
     // 添油
     async addOil() {
-      if (!Utils.gget('restaurant_oil', true)) {
+      if (!actionEnabled('restaurant', 'restaurant_oil', Utils.gget('restaurant_oil', true))) {
         Utils.log('餐厅: 添油开关关');
         return false;
       }
@@ -1624,6 +1658,18 @@
       return true;
     },
 
+    startLearnScan(source) {
+      Utils.gset(this.scanStateKey, {
+        targetLevel: '__learn__',
+        blocked: [],
+        active: true,
+        source,
+        startedAt: Date.now(),
+      });
+      Utils.log(`食谱: ${source}开启独立学习扫描`);
+      return true;
+    },
+
     parseCookbookPath(path = location.pathname) {
       const match = path.match(/^\/xz\/cookbook_(\d+)_(\d+)_(\d+)$/);
       return match ? { street: Number(match[1]), category: Number(match[2]), page: Number(match[3]) } : null;
@@ -1635,6 +1681,15 @@
         const href = a.getAttribute('href') || '';
         const match = href.match(/^\/xz\/cookbook_(\d+)_3_1$/);
         return text === '可升级' && match && (street == null || Number(match[1]) === street);
+      }) || null;
+    },
+
+    findAllCategoryLink(street = null) {
+      return Array.from(document.querySelectorAll('a')).find(a => {
+        const text = (a.textContent || '').trim();
+        const href = a.getAttribute('href') || '';
+        const match = href.match(/^\/xz\/cookbook_(\d+)_0_1$/);
+        return text === '全部' && match && (street == null || Number(match[1]) === street);
       }) || null;
     },
 
@@ -1650,6 +1705,11 @@
     // 主入口
     async run() {
       const path = location.pathname;
+      if (activeActionScope('recipe') === 'recipe_learn') {
+        if (/^\/xz\/cook_\d+/.test(path)) return this.processLearnDetail();
+        if (/cookbook_/.test(path)) return this.processLearnCookbook();
+        return true;
+      }
       const cfg = this.getConfig();
       if (cfg.targetLevel === 'off') {
         Utils.log('食谱: 长期目标为关闭，不自动扫描/学习');
@@ -1674,6 +1734,70 @@
         return this.returnToList() ? false : true;
       }
       return true;
+    },
+
+    async processLearnCookbook() {
+      const scanState = Utils.gget(this.scanStateKey, null) || { targetLevel: '__learn__', blocked: [], active: true };
+      if (!scanState.active) return true;
+      const pageInfo = this.parseCookbookPath();
+      if (!pageInfo || pageInfo.category !== 0) {
+        const allLink = this.findAllCategoryLink(pageInfo?.street ?? scanState.street ?? null);
+        if (!allLink) {
+          Utils.warn('食谱学习: 找不到真实“全部”分类入口');
+          return true;
+        }
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(allLink);
+        return false;
+      }
+
+      scanState.street = pageInfo.street;
+      scanState.listPath = location.pathname;
+      Utils.gset(this.scanStateKey, scanState);
+      const learnItem = this.findLearnItem(scanState.blocked || []);
+      if (learnItem) {
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(learnItem.link);
+        Utils.log(`食谱学习: 进入 ${learnItem.name}`);
+        return false;
+      }
+      const nextPage = this.findNextPageByCategory(pageInfo.street, 0);
+      if (nextPage) {
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(nextPage);
+        return false;
+      }
+      scanState.active = false;
+      scanState.completedAt = Date.now();
+      Utils.gset(this.scanStateKey, scanState);
+      Utils.log('食谱学习: 全部分类扫描完成');
+      return true;
+    },
+
+    async processLearnDetail() {
+      const text = document.body.textContent || '';
+      if (/食谱学习失败|学习条件不足|无法学习/.test(text)) {
+        const scanState = Utils.gget(this.scanStateKey, null) || { targetLevel: '__learn__', blocked: [], active: true };
+        const itemPath = location.pathname.match(/^\/xz\/cook_\d+/)?.[0];
+        scanState.blocked ||= [];
+        if (itemPath && !scanState.blocked.includes(itemPath)) scanState.blocked.push(itemPath);
+        Utils.gset(this.scanStateKey, scanState);
+        Utils.warn(`食谱学习: ${itemPath || '当前食谱'} 条件不足，本轮跳过`);
+        return this.returnToList() ? false : true;
+      }
+      const learnBtn = Utils.findByText('a', '学习');
+      if (learnBtn) {
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(learnBtn);
+        Utils.log('食谱学习: 已点学习');
+        return false;
+      }
+      const scanState = Utils.gget(this.scanStateKey, null) || { targetLevel: '__learn__', blocked: [], active: true };
+      const itemPath = location.pathname.match(/^\/xz\/cook_\d+/)?.[0];
+      scanState.blocked ||= [];
+      if (itemPath && !scanState.blocked.includes(itemPath)) scanState.blocked.push(itemPath);
+      Utils.gset(this.scanStateKey, scanState);
+      return this.returnToList() ? false : true;
     },
 
     // 12.1 列表页（cookbook_*）
@@ -1753,13 +1877,14 @@
     },
 
     // 找未学习项（无"已学习"或"可升级"标记）
-    findLearnItem() {
+    findLearnItem(blocked = []) {
       const sections = document.querySelectorAll('.gen_background_blue.s_room.s_font');
       for (const section of sections) {
         for (const p of section.querySelectorAll('p')) {
           const txt = p.textContent;
           if (/已学习|可升级|等级[:：]/.test(txt)) continue;
           const link = p.querySelector('a[href^="/xz/cook_"]');
+          if (link && blocked.includes(link.getAttribute('href') || '')) continue;
           if (link) {
             return { name: link.textContent.trim(), link };
           }
@@ -1770,11 +1895,15 @@
 
     // 找下一页
     findNextPage(street) {
+      return this.findNextPageByCategory(street, 3);
+    },
+
+    findNextPageByCategory(street, category) {
       return Array.from(document.querySelectorAll('a')).find(a => {
         const t = (a.textContent || '').trim();
         const href = a.getAttribute('href') || '';
-        const sameUpgradableCategory = new RegExp(`^/xz/cookbook_${street}_3_\\d+$`).test(href);
-        return sameUpgradableCategory && (t === '下一页' || t === '下一頁' || t === '>>' || t === 'Next');
+        const sameCategory = new RegExp(`^/xz/cookbook_${street}_${category}_\\d+$`).test(href);
+        return sameCategory && (t === '下一页' || t === '下一頁' || t === '>>' || t === 'Next');
       }) || null;
     },
 
@@ -2022,7 +2151,16 @@
       return state;
     },
     save(key, state) { Utils.gset(`project_state_${key}`, state); },
-    remaining(id, state) { return projectEnabled(id) ? Math.max(0, projectTarget(id) - (state.counts[id] || 0)) : 0; },
+    remaining(id, state) {
+      const scope = activeActionScope();
+      const scopedProject = scope?.startsWith('project_') ? scope.slice('project_'.length) : null;
+      if (scopedProject) {
+        if (scopedProject !== id) return 0;
+        // 独立运行绕过项目开关；配置为0时仍明确执行1次。
+        return Math.max(0, Math.max(1, projectTarget(id)) - (state.counts[id] || 0));
+      }
+      return projectEnabled(id) ? Math.max(0, projectTarget(id) - (state.counts[id] || 0)) : 0;
+    },
   };
 
   // 好友项目：逐个好友、逐层扫描；只在页面明确返回成功时增加进度。
@@ -3180,6 +3318,48 @@
       return true;
     },
 
+    startAction(actionId) {
+      const def = ACTION_RUN_DEFS[actionId];
+      if (!def) {
+        Utils.warn(`细项运行: 未找到动作 ${actionId}`);
+        return false;
+      }
+      const stepIndex = this.PLAN.findIndex(step => step.module === def.module);
+      if (stepIndex < 0 || this.isOn()) {
+        Utils.warn(this.isOn() ? '细项运行: 已有任务正在执行，请先停止' : `细项运行: 未找到父模块 ${def.module}`);
+        Utils.showStatus('细项运行', this.isOn() ? '已有任务正在执行' : '父模块不存在', '#f44');
+        return false;
+      }
+      const schedulerWasOn = typeof Scheduler !== 'undefined' && Scheduler.isOn();
+      if (schedulerWasOn) Scheduler.stop(`细项运行 ${actionId}`);
+      if (def.module === 'dailyFriend') {
+        const friendState = DailyProjectState.load('friend');
+        friendState.pending = null;
+        friendState.visited = [];
+        friendState.tried = [];
+        friendState.page = 1;
+        DailyProjectState.save('friend', friendState);
+      }
+      if (def.module === 'restaurant') Utils.gset('restaurant_remaining_floors', []);
+      Utils.gset('operation_stopped', false);
+      Utils.gset('autopilot_emergency_stop', false);
+      Utils.gset('restaurant_roach_attempts', 0);
+      Utils.gset('autopilot_session', { id: Date.now(), iter: 0 });
+      Utils.gset(this.stateKey, {
+        enabled: true,
+        stepIndex,
+        startedAt: Date.now(),
+        singleModule: def.module,
+        actionScope: actionId,
+        actionNavSteps: def.navSteps,
+        resumeSchedulerAfterSingle: schedulerWasOn,
+      });
+      Utils.log(`▶ 细项运行启动: ${actionId} → ${def.module}`);
+      Utils.showStatus('细项运行', actionId, '#4CAF50');
+      setTimeout(() => this.continue(), 300);
+      return true;
+    },
+
     stop(reason = '', { resumeScheduler = null } = {}) {
       const previousState = Utils.gget(this.stateKey, {});
       const shouldResumeScheduler = resumeScheduler === null
@@ -3199,7 +3379,7 @@
       const state = Utils.gget(this.stateKey, null);
       if (!state || !state.enabled) return;
 
-      // 紧急停止标志（外部 Esc/按钮可置位）
+      // 紧急停止标志（仅由面板鼠标总停止按钮置位）
       if (Utils.gget('autopilot_emergency_stop', false)) {
         Utils.gset('autopilot_emergency_stop', false);
         this.stop('紧急停止', { resumeScheduler: false });
@@ -3218,7 +3398,8 @@
       Utils.gset('autopilot_session', session);
 
       const stepIdx = state.stepIndex || 0;
-      const step = this.PLAN[stepIdx];
+      const baseStep = this.PLAN[stepIdx];
+      const step = baseStep && state.actionNavSteps ? { ...baseStep, navSteps: state.actionNavSteps } : baseStep;
 
       if (!step) {
         // 全部跑完
@@ -3238,7 +3419,8 @@
 
       // 同一次AutoPilot食谱步骤只准备一次；跨页面刷新不能反复清空blocked集合。
       if (step.module === 'recipe' && state.recipePreparedStep !== stepIdx) {
-        MOD.recipe.startScan('自动驾驶');
+        if (state.actionScope === 'recipe_learn') MOD.recipe.startLearnScan('细项运行');
+        else MOD.recipe.startScan('自动驾驶');
         state.recipePreparedStep = stepIdx;
         Utils.gset(this.stateKey, state);
       }
@@ -3331,9 +3513,10 @@
     advance() {
       const state = Utils.gget(this.stateKey, {});
       if (state.singleModule) {
-        Utils.log(`✓ 单项运行完成: ${state.singleModule}`);
-        Utils.showStatus('单项运行', `${state.singleModule} 完成 ✓`, '#4CAF50');
-        this.stop(`${state.singleModule} 单项完成`);
+        const label = state.actionScope || state.singleModule;
+        Utils.log(`✓ 单项运行完成: ${label}`);
+        Utils.showStatus(state.actionScope ? '细项运行' : '单项运行', `${label} 完成 ✓`, '#4CAF50');
+        this.stop(`${label} 单项完成`);
         return;
       }
       state.stepIndex = (state.stepIndex || 0) + 1;
