@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.34
+// @name         梦想小镇日常一体化 v3.35
 // @namespace    http://tampermonkey.net/
-// @version      3.34
+// @version      3.35
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.35 变更（2026-07-15 邮箱真实入口修复）
+ * - 餐厅后邮箱改走首页真实 /xz/mailbox 入口；该页本身就是系统第一页
+ * - 删除首页不存在的 /xz/mailbox_0_1 首跳，结束每5分钟失败重试造成的调度空转
+ *
  * v3.34 变更（2026-07-15 NPC轮次语义修复）
  * - “拜访NPC”按完整轮次计数：菜园姐与雯姐都处理完才完成1轮
  * - 推荐次数改为1轮，并迁移v3.33可能在首位NPC后提前完成的状态
@@ -189,7 +193,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.34';
+  const SCRIPT_VERSION = '3.35';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -2591,7 +2595,7 @@
 
     // 系统邮箱：餐厅收尾回首页后立即检查；平时跟随下一次餐厅，不独立抢跑。
     {
-      id: 'mailboxAfterRestaurant', module: 'mailbox', target: '/xz/mailbox_0_1', nav: '系统邮箱', route: [{ href: '/xz/mailbox_0_1' }], runMs: 30000, chainedOnly: true,
+      id: 'mailboxAfterRestaurant', module: 'mailbox', target: '/xz/mailbox', nav: '邮箱', route: [{ text: '邮箱', href: '/xz/mailbox' }], runMs: 30000, chainedOnly: true,
       computeNext() {
         const nowMs = Utils.getServerTime().getTime();
         const restaurantLast = Utils.gget('sched_restaurant_lastRun', 0);
@@ -3096,7 +3100,7 @@
       { module: 'egg',        navSteps: [{ text: '>>小镇扭蛋活动<<',    hrefMatch: '/xz/activity_egg' }] },
       { module: 'energy',     navSteps: [{ text: '吃饭活动',            hrefMatch: '/xz/activity_energy' }] },
       { module: 'restaurant', navSteps: [{ text: '餐厅',                hrefMatch: '/xz/restaurant' }] },
-      { module: 'mailbox',    navSteps: [{ text: '',                    hrefMatch: '/xz/mailbox_0_1' }] },
+      { module: 'mailbox',    navSteps: [{ text: '邮箱',                 hrefMatch: '/xz/mailbox' }] },
       { module: 'facility',   navSteps: [{ text: '设施',                hrefMatch: '/xz/restaurant_facility' }] },
       { module: 'bag',        navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' },
                                          { text: '礼包',                hrefMatch: '/xz/warehouse_2_0' }] },

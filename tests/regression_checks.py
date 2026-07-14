@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.34 metadata and shared panel version", "// @version      3.34" in text and "const SCRIPT_VERSION = '3.34';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.35 metadata and shared panel version", "// @version      3.35" in text and "const SCRIPT_VERSION = '3.35';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel has no stale hardcoded title", "梦想小镇日常 v3.18" not in text and "梦想小镇日常 v3.20" not in text)
 require("panel doubles desktop width", "width:560px" in text and "box-sizing:border-box" in text)
 require("panel control rows use two columns", "#dxzxx-rows,#dxzxx-project-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" in text)
@@ -169,13 +169,13 @@ require("scheduler recipe route is dynamic", "hrefPattern: '^/xz/cookbook_\\\\d+
 require("scheduler restaurant route uses real href without mutable text", "id: 'restaurant', module: 'restaurant', target: '/xz/restaurant', nav: '餐厅', route: [{ href: '/xz/restaurant' }]" in text)
 dynamic = text[text.index("const DYNAMIC_SCHEDULE = ["):text.index("const ALL_ENTRIES")]
 require("scheduler mailbox follows restaurant entry", dynamic.index("id: 'restaurant'") < dynamic.index("id: 'mailboxAfterRestaurant'") < dynamic.index("id: 'facility'"))
-require("scheduler mailbox uses real system inbox href", "id: 'mailboxAfterRestaurant', module: 'mailbox', target: '/xz/mailbox_0_1'" in dynamic and "route: [{ href: '/xz/mailbox_0_1' }]" in dynamic)
+require("scheduler mailbox uses real homepage inbox href", "id: 'mailboxAfterRestaurant', module: 'mailbox', target: '/xz/mailbox'" in dynamic and "route: [{ text: '邮箱', href: '/xz/mailbox' }]" in dynamic)
 require("scheduler mailbox is chained only", "chainedOnly: true" in dynamic and "restaurantLast > mailboxLast" in dynamic and "e.chainedOnly ? e.computeNext()" in text)
 require("scheduler forces mailbox immediately after restaurant return", "phase.id === 'restaurant' && isEnabled('mailbox')" in text and "void this.fireToTarget(mailboxEntry);" in text and "确保其它积压任务不能插到两者之间" in text)
 restaurant_plan = text.index("{ module: 'restaurant', navSteps:")
 mailbox_plan = text.index("{ module: 'mailbox',    navSteps:")
 facility_plan = text.index("{ module: 'facility',   navSteps:")
-require("autopilot mailbox is immediately after restaurant", restaurant_plan < mailbox_plan < facility_plan and "hrefMatch: '/xz/mailbox_0_1'" in text[mailbox_plan:facility_plan])
+require("autopilot mailbox is immediately after restaurant", restaurant_plan < mailbox_plan < facility_plan and "text: '邮箱'" in text[mailbox_plan:facility_plan] and "hrefMatch: '/xz/mailbox'" in text[mailbox_plan:facility_plan])
 require("scheduler supports pattern navigation", "new RegExp(step.hrefPattern).test(href)" in text and "new RegExp(nav.hrefPattern).test(href)" in text)
 require("24h schedules have no cumulative jitter", "slot: '24h', jitterMin: 0, jitterMax: 0" in daily and "jitterMax: 60" not in daily)
 require("scheduler recomputes all tasks after return", "this.computeAll();\n        this.scheduleNext();" in text)
