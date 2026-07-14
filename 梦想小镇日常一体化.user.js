@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.31
+// @name         梦想小镇日常一体化 v3.32
 // @namespace    http://tampermonkey.net/
-// @version      3.31
+// @version      3.32
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -180,7 +180,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.31';
+  const SCRIPT_VERSION = '3.32';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -415,9 +415,10 @@
         #dxzxx-panel .panel-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start;}
         #dxzxx-panel .panel-column{min-width:0;}
         #dxzxx-panel .panel-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 6px;}
+        #dxzxx-panel .single-run{width:auto;padding:1px 7px;margin:0;background:#4CAF50;color:#fff;font-size:11px;font-weight:normal;flex:0 0 auto;}
         #dxzxx-panel #dxzxx-rows .row.current{background:#FFE082;border-radius:3px;font-weight:bold;}
         #dxzxx-sched-wrap>div{line-height:1.25;}
-        #dxzxx-sched-status{max-height:54px;overflow-y:auto;}
+        #dxzxx-sched-status{max-height:110px;overflow-y:auto;}
         #dxzxx-sched-list{display:none;}
         @media (max-width:620px){#dxzxx-panel{left:10px;right:10px;width:auto;}#dxzxx-panel .panel-columns,#dxzxx-rows,#dxzxx-project-rows{grid-template-columns:1fr;}}
         #dxzxx-fab{position:fixed;top:10px;right:10px;z-index:99999;background:#4fe;color:#000;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:bold;box-shadow:0 2px 8px rgba(0,0,0,.2);font-size:16px;}
@@ -437,7 +438,6 @@
             </details>
             <details open>
               <summary>食谱升级配置</summary>
-              <div class="label">目标等级</div>
               <select id="dxzxx-recipe-level">
                 <option value="off">关闭升级</option>
                 <option value="中品">升级到中品</option>
@@ -492,7 +492,7 @@
         row.dataset.module = m.id;
         const stepNumber = (planOrder.get(m.id) ?? -1) + 1;
         const label = m.label.replace(/^\d+\.\s*/, '');
-        row.innerHTML = `<label>${stepNumber > 0 ? `${stepNumber}. ` : ''}${label}</label><span class="toggle ${enabled ? 'on' : 'off'}" data-id="${m.id}">${enabled ? '开' : '关'}</span>`;
+        row.innerHTML = `<label>${stepNumber > 0 ? `${stepNumber}. ` : ''}${label}</label><button class="single-run" data-run-module="${m.id}">运行</button><span class="toggle ${enabled ? 'on' : 'off'}" data-id="${m.id}">${enabled ? '开' : '关'}</span>`;
         rows.appendChild(row);
       });
 
@@ -555,6 +555,12 @@
         };
         input.addEventListener('input', saveProjectCount);
         input.addEventListener('change', saveProjectCount);
+      });
+      panel.querySelectorAll('[data-run-module]').forEach(button => {
+        button.addEventListener('click', () => {
+          AutoPilot.startSingle(button.dataset.runModule);
+          Panel.refreshAutopilotUI();
+        });
       });
 
       // 食谱等级下拉
@@ -2551,12 +2557,9 @@
       this.startWatchdog();
       Utils.log('⏰ 调度器: 启动');
       Utils.showStatus('调度器', '启动中…', '#FF9800');
-      if (location.pathname === '/xz/') {
-        this.computeAll();
-        this.scheduleNext();
-      } else {
-        this.navigateHome();
-      }
+      // 启动调度器不打断手动浏览；真正到点时才从当前页返回首页执行。
+      this.computeAll();
+      this.scheduleNext();
     },
 
     stop(reason = '') {
@@ -2598,17 +2601,22 @@
           return;
         }
 
-        if (path !== '/xz/') {
-          Utils.log(`调度看门狗(${source}): 无活动phase但停在 ${path}，返回首页`);
-          await this.navigateHome();
-          return;
-        }
-
         this.computeAll();
         const nowMs = Utils.getServerTime().getTime();
         const due = ALL_ENTRIES()
           .filter(entry => entry.nextRunAt && entry.nextRunAt <= nowMs && isEnabled(entry.module))
           .sort((a, b) => a.nextRunAt - b.nextRunAt)[0];
+        if (path !== '/xz/') {
+          if (due) {
+            if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+            Utils.log(`调度看门狗(${source}): ${due.id} 已到点，从 ${path} 返回首页执行`);
+            await this.navigateHome();
+          } else {
+            Utils.log(`调度看门狗(${source}): 手动浏览 ${path}，无到点任务，不打断`);
+            this.scheduleNext();
+          }
+          return;
+        }
         if (due && !Utils.gget(PHASE_KEY, null)) {
           if (this.timer) { clearTimeout(this.timer); this.timer = null; }
           Utils.log(`调度看门狗(${source}): 立即触发过期任务 ${due.id}`);
@@ -2628,12 +2636,10 @@
       if (!this.isOn()) return;
       let phase = Utils.gget(PHASE_KEY, null);
 
-      // ---- 无 phase：仅主页初始化 ----
+      // ---- 无 phase：任何页面都维持计时，但不主动离开手动浏览页 ----
       if (!phase) {
-        if (currentPath === '/xz/') {
-          this.computeAll();
-          this.scheduleNext();
-        }
+        this.computeAll();
+        this.scheduleNext();
         return;
       }
 
@@ -2853,11 +2859,9 @@
       }
 
       if (location.pathname !== '/xz/') {
-        Utils.warn(`调度器: 触发时不在主页 (${location.pathname})，跳过`);
-        // 推后 1min 让用户导航回来
-        entry.nextRunAt = Utils.getServerTime().getTime() + 60000;
-        Utils.gset(`sched_${entry.id}_nextAt`, entry.nextRunAt);
-        this.scheduleNext();
+        Utils.log(`调度器: ${entry.id} 已到点，从 ${location.pathname} 返回首页后立即执行`);
+        // 保留原到点时间；主页加载后会以0延迟再次触发，不再人为推后1分钟。
+        await this.navigateHome();
         return;
       }
 
@@ -3027,13 +3031,47 @@
       if (location.pathname !== '/xz/') this.navigateToHome();
     },
 
-    stop(reason = '', { resumeScheduler = true } = {}) {
+    startSingle(moduleId) {
+      const stepIndex = this.PLAN.findIndex(step => step.module === moduleId);
+      if (stepIndex < 0) {
+        Utils.warn(`单项运行: 未找到模块 ${moduleId}`);
+        return false;
+      }
+      if (this.isOn()) {
+        Utils.warn('单项运行: 自动驾驶已有任务正在执行，请先停止');
+        Utils.showStatus('单项运行', '已有任务正在执行', '#f44');
+        return false;
+      }
+      const schedulerWasOn = typeof Scheduler !== 'undefined' && Scheduler.isOn();
+      if (schedulerWasOn) Scheduler.stop(`单项运行 ${moduleId}`);
+      Utils.gset('autopilot_emergency_stop', false);
+      Utils.gset('restaurant_roach_attempts', 0);
+      Utils.gset('restaurant_dig_attempts', 0);
+      Utils.gset('autopilot_session', { id: Date.now(), iter: 0 });
+      Utils.gset(this.stateKey, {
+        enabled: true,
+        stepIndex,
+        startedAt: Date.now(),
+        singleModule: moduleId,
+        resumeSchedulerAfterSingle: schedulerWasOn,
+      });
+      Utils.log(`▶ 单项运行启动: ${moduleId}`);
+      Utils.showStatus('单项运行', `${stepIndex + 1}. ${moduleId}`, '#4CAF50');
+      setTimeout(() => this.continue(), 300);
+      return true;
+    },
+
+    stop(reason = '', { resumeScheduler = null } = {}) {
+      const previousState = Utils.gget(this.stateKey, {});
+      const shouldResumeScheduler = resumeScheduler === null
+        ? (previousState.singleModule ? !!previousState.resumeSchedulerAfterSingle : true)
+        : resumeScheduler;
       Utils.gset(this.stateKey, { enabled: false });
       Utils.gset('autopilot_session', null);
       Utils.log(`⏹ 自动计划停止${reason ? ': ' + reason : ''}`);
       Utils.showStatus('自动驾驶', '已停止', '#f44');
-      if (resumeScheduler && typeof Scheduler !== 'undefined' && !Scheduler.isOn()) {
-        Utils.log('自动驾驶: 已交接长期循环调度器');
+      if (shouldResumeScheduler && typeof Scheduler !== 'undefined' && !Scheduler.isOn()) {
+        Utils.log(previousState.singleModule ? '单项运行: 已恢复原调度器状态' : '自动驾驶: 已交接长期循环调度器');
         Scheduler.start();
       }
     },
@@ -3073,7 +3111,7 @@
 
       Utils.log(`自动驾驶: iter=${session.iter} step=${stepIdx + 1}/${this.PLAN.length} (${step.module}) path=${path}`);
 
-      if (!isEnabled(step.module)) {
+      if (!state.singleModule && !isEnabled(step.module)) {
         Utils.log(`计划[${stepIdx + 1}/${this.PLAN.length}] ${step.module}: 已关闭，跳过`);
         this.advance();
         return;
@@ -3173,6 +3211,12 @@
 
     advance() {
       const state = Utils.gget(this.stateKey, {});
+      if (state.singleModule) {
+        Utils.log(`✓ 单项运行完成: ${state.singleModule}`);
+        Utils.showStatus('单项运行', `${state.singleModule} 完成 ✓`, '#4CAF50');
+        this.stop(`${state.singleModule} 单项完成`);
+        return;
+      }
       state.stepIndex = (state.stepIndex || 0) + 1;
       Utils.gset(this.stateKey, state);
       if (location.pathname === '/xz/') {
