@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.35 metadata and shared panel version", "// @version      3.35" in text and "const SCRIPT_VERSION = '3.35';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.36 metadata and shared panel version", "// @version      3.36" in text and "const SCRIPT_VERSION = '3.36';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel has no stale hardcoded title", "梦想小镇日常 v3.18" not in text and "梦想小镇日常 v3.20" not in text)
 require("panel doubles desktop width", "width:560px" in text and "box-sizing:border-box" in text)
 require("panel control rows use two columns", "#dxzxx-rows,#dxzxx-project-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" in text)
@@ -121,6 +121,9 @@ require("restaurant dig stops on insufficient energy", "/体力不足|翻橱柜�
 require("restaurant dig has a hard cap", "MAX_DIG_ATTEMPTS: 120" in text and "restaurant_dig_attempts" in text)
 require("restaurant rescue disables stuck run", "v39_restaurant_rescue_done" in text and "Utils.gset('mod_restaurant_enabled', false);" in text)
 require("restaurant roach has failure stop and hard cap", "MAX_ROACH_ATTEMPTS: 20" in text and "restaurant_roach_attempts" in text and "打蟑螂已停止" in text)
+require("restaurant floor detection cannot oscillate between siblings", "el.previousElementSibling || el.nextElementSibling" not in text and ".some(tryMatch);" in text)
+require("scheduler expires persisted phases before module execution", "recoverExpiredPhase(path)" in text and text.index("recoverExpiredPhase(path)") < text.index("const activePhase = Scheduler.isOn()"))
+require("expired restaurant phase disables risky actions", "超时自救已关闭打蟑螂/翻柜" in text and "Utils.gset('restaurant_remaining_floors', []);" in text)
 require("restaurant v310 rescue disables both risky actions", "v310_restaurant_rescue_done" in text and "Utils.gset('restaurant_cockroach', false);" in text)
 require("restaurant mailbox switch defaults on", "restaurant_mailbox: true" in text and "餐厅后领取系统邮件" in text)
 require("mailbox scans only system first page", "p === '/xz/mailbox' || p === '/xz/mailbox_0_1'" in text and "mailbox_0_2" not in text)

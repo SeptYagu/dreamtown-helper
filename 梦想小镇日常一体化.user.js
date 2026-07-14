@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.35
+// @name         梦想小镇日常一体化 v3.36
 // @namespace    http://tampermonkey.net/
-// @version      3.35
+// @version      3.36
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.36 变更（2026-07-14 餐厅死循环与调度自救）
+ * - 修复蟑螂图标邻接查找在两个兄弟元素间往返，导致餐厅总览主线程永久卡死
+ * - 调度阶段增加绝对超时；过期餐厅任务先关闭高风险动作并返回首页，避免重开后续跑旧 running
+ *
  * v3.35 变更（2026-07-15 邮箱真实入口修复）
  * - 餐厅后邮箱改走首页真实 /xz/mailbox 入口；该页本身就是系统第一页
  * - 删除首页不存在的 /xz/mailbox_0_1 首跳，结束每5分钟失败重试造成的调度空转
@@ -193,7 +197,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.35';
+  const SCRIPT_VERSION = '3.36';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -1391,20 +1395,19 @@
         'img[src*="cockroach"], img[alt*="蟑螂"], img[alt*="cockroach"], img[title*="蟑螂"]'
       );
       cockroachImgs.forEach(img => {
-        const tryMatch = (el) => {
-          while (el) {
-            if (el.tagName === 'A' && /\/xz\/restaurant_\d+_\d+/.test(el.getAttribute('href') || '')) {
-              const m = el.href.match(/_(\d+)$/);
-              if (m) floors.add(+m[1]);
-              return true;
-            }
-            el = el.previousElementSibling || el.nextElementSibling;
-          }
-          return false;
+        const tryMatch = (node) => {
+          if (!node) return false;
+          const el = node.matches?.('a[href*="/xz/restaurant_"]')
+            ? node
+            : node.querySelector?.('a[href*="/xz/restaurant_"]');
+          if (!el || !/\/xz\/restaurant_\d+_\d+/.test(el.getAttribute('href') || '')) return false;
+          const m = el.href.match(/_(\d+)$/);
+          if (m) floors.add(+m[1]);
+          return !!m;
         };
-        if (!tryMatch(img.previousElementSibling)) {
-          tryMatch(img.nextElementSibling);
-        }
+        // 站点结构是“楼层链接 + 蟑螂图标”。只检查有限邻接节点，禁止兄弟节点来回游走。
+        [img.closest?.('a[href*="/xz/restaurant_"]'), img.previousElementSibling, img.nextElementSibling]
+          .some(tryMatch);
       });
 
       // 备用：扫文本含"感染"/"蟑螂"的行
@@ -2643,6 +2646,30 @@
 
     isOn() { return !!Utils.gget(this.enabledKey, false); },
 
+    // 跨刷新 phase 必须有总寿命上限，不能仅靠每次页面内的 runMs 等待窗口。
+    // 返回 true 表示已经接管本页，Router 不应再运行原模块。
+    async recoverExpiredPhase(currentPath) {
+      const phase = Utils.gget(PHASE_KEY, null);
+      if (!phase || !['navigating', 'running'].includes(phase.state) || !phase.startedAt) return false;
+      const maxAgeMs = Math.max(60000, (phase.runMs || 10000) + 30000);
+      if (Date.now() - phase.startedAt <= maxAgeMs) return false;
+
+      Utils.warn(`调度器: ${phase.id}/${phase.state} 已超过 ${Math.round(maxAgeMs / 1000)} 秒，终止旧阶段并返回首页`);
+      if (phase.module === 'restaurant') {
+        Utils.gset('restaurant_cockroach', false);
+        Utils.gset('restaurant_dig', false);
+        Utils.gset('restaurant_roach_attempts', 0);
+        Utils.gset('restaurant_dig_attempts', 0);
+        Utils.gset('restaurant_remaining_floors', []);
+        Utils.warn('餐厅: 超时自救已关闭打蟑螂/翻柜；添油开关保持不变');
+      }
+      const returning = { state: 'returning', id: phase.id, module: phase.module };
+      Utils.gset(PHASE_KEY, returning);
+      if (currentPath === '/xz/') this.onReturnFromTarget(returning);
+      else await this.navigateHome();
+      return true;
+    },
+
     start() {
       // 互斥：若 AutoPilot 在跑，先停它
       if (typeof AutoPilot !== 'undefined' && AutoPilot.isOn()) {
@@ -3341,6 +3368,8 @@
   const Router = {
     async run() {
       const path = location.pathname;
+      // 必须在运行页面模块之前处理过期 phase；否则旧餐厅 phase 会先再次触发问题动作。
+      if (Scheduler.isOn() && await Scheduler.recoverExpiredPhase(path)) return;
       const activePhase = Scheduler.isOn() ? Utils.gget(PHASE_KEY, null) : null;
       Utils.log(`路由: ${path}`);
       let matched = 0;
