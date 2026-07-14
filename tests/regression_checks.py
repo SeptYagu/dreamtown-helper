@@ -15,7 +15,9 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.37 metadata and shared panel version", "// @version      3.37" in text and "const SCRIPT_VERSION = '3.37';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.38 metadata and shared panel version", "// @version      3.38" in text and "const SCRIPT_VERSION = '3.38';" in text and "v${SCRIPT_VERSION}" in text)
+require("panel registers at document start", "// @run-at       document-start" in text)
+require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("panel has no stale hardcoded title", "梦想小镇日常 v3.18" not in text and "梦想小镇日常 v3.20" not in text)
 require("panel doubles desktop width", "width:560px" in text and "box-sizing:border-box" in text)
 require("panel control rows use two columns", "#dxzxx-rows,#dxzxx-project-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" in text)

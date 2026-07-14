@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.37
+// @name         梦想小镇日常一体化 v3.38
 // @namespace    http://tampermonkey.net/
-// @version      3.37
+// @version      3.38
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -11,10 +11,14 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
-// @run-at       document-idle
+// @run-at       document-start
 // ==/UserScript==
 
 /*
+ * v3.38 变更（2026-07-14 面板首屏稳定）
+ * - userscript提前到document-start注册，减少页面加载后面板延迟出现
+ * - 面板先隐藏完成状态填充，强制展开长期调度器后一次性显示，消除折叠闪动
+ *
  * v3.37 变更（2026-07-14 自家餐厅动作修复）
  * - 第15项改名“餐厅管理（总开关）”，明确其与左上角子开关的主从关系
  * - 删除自家餐厅不存在的翻柜功能；好友翻柜仍由独立“每日好友项目”负责
@@ -202,7 +206,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.37';
+  const SCRIPT_VERSION = '3.38';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -442,6 +446,8 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
+      // 先在不可见状态完成动态行与调度状态填充，避免浏览器绘制半初始化面板。
+      panel.style.visibility = 'hidden';
       panel.innerHTML = `<h3>🦌 梦想小镇日常 v${SCRIPT_VERSION}</h3>
         <div class="panel-columns">
           <div class="panel-column">
@@ -496,6 +502,8 @@
           <div id="dxzxx-rows"></div>
         </details>
         <button class="hide-btn" id="dxzxx-hide">收起</button>`;
+      const schedWrap = panel.querySelector('#dxzxx-sched-wrap');
+      if (schedWrap) schedWrap.open = true;
       document.body.appendChild(panel);
 
       const rows = panel.querySelector('#dxzxx-rows');
@@ -646,6 +654,12 @@
       // 初始显示调度器状态
       Panel.refreshSchedUI();
       Panel.refreshAutopilotUI();
+      // 下一绘制帧才整体显示；再次写open防止站点初始化样式影响原生details首帧。
+      requestAnimationFrame(() => {
+        if (!panel.isConnected) return;
+        if (schedWrap) schedWrap.open = true;
+        panel.style.visibility = 'visible';
+      });
       // 定时刷新状态显示
       setInterval(() => { Panel.refreshSchedUI(); Panel.refreshAutopilotUI(); }, 5000);
     },
