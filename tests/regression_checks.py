@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.15 metadata", "// @version      3.15" in text and "日常一体化 v3.15" in text)
+require("v3.16 metadata", "// @version      3.16" in text and "日常一体化 v3.16" in text)
 require("server time accepts current and legacy labels", "/(?:驯鹿|家园)报时[：:]/" in text)
 
 coupon_ids = re.search(r"PROP_IDS:\s*\[([^\]]+)\]", text)
@@ -51,6 +51,15 @@ require("autopilot is labelled one-shot", "🚀 立即跑一轮全套" in text a
 require("guardian continues one shot per page", "guardianLaunch') && oc.includes('82') && oc.includes(',1)'" in text)
 require("guardian replenishes 300", "input.value = '300';" in text and "buyByActivity(0,82,0)" in text)
 require("egg action returns in-progress", "扭蛋: 已扭" in text and "return false;" in text)
+require("daily projects exclude moving", "DAILY_PROJECT_DEFS" in text and "project_move" not in text)
+require("daily project labels show vitality recommendations", "打蟑螂（推荐15次）" in text and "翻橱柜（推荐20次）" in text and "点赞/被赞（推荐5次）" in text)
+require("daily projects use 6am game day", "date.getTime() - 6 * 3600000" in text)
+require("daily friend actions are configurable", "['like', 'dig', 'roach'].some" in text and "DailyProjectState.remaining(type, state)" in text)
+require("daily bar actions are configurable", "DailyProjectState.remaining('fist'" in text and "DailyProjectState.remaining('cup'" in text and "DailyProjectState.remaining('number'" in text)
+require("vitality claims first available award", "a[onclick^='addVitalityAward']" in text and "今日活跃: 领取第一项" in text)
+require("morning and evening reward sweeps exist", "vitalityMorning" in daily and "vitalityEvening" in daily and "seasonMorning" in daily and "seasonEvening" in daily and "eggMorning" in daily and "eggEvening" in daily)
+require("temporary reward routes are optional", "optional: true" in daily and "可选入口" in text)
+require("scheduled modules are isolated", "与当前调度阶段" in text and "mod.requiresScheduled" in text)
 
 require("market discount is exactly 666", "DISCOUNT_PRICE: 666" in text and "price === this.CONFIG.DISCOUNT_PRICE" in text)
 require("market discount dedupes by server hour", "market_last_discount_hour" in text)

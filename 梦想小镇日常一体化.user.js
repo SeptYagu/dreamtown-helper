@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.15
+// @name         梦想小镇日常一体化 v3.16
 // @namespace    http://tampermonkey.net/
-// @version      3.15
+// @version      3.16
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.16 变更（2026-07-14 每日项目与领奖解耦）
+ * - 新增可配置每日项目：点赞、翻柜、打蟑螂、猜拳、猜酒杯、猜数字、额外许愿
+ * - 常驻活跃/季节/扭蛋只负责领奖；早饭后执行项目并领奖，晚饭后复查领奖
+ * - 项目次数按服务器06:00游戏日持久化；搬家按用户要求不纳入
+ *
  * v3.15 变更（2026-07-14 服务器时间兼容）
  * - 当前站点“驯鹿报时”已改名“家园报时”，同时兼容两种服务器时间标签
  * - 重置 v3.14 用本地时区误算的 nextAt，并把历史 lastRun 迁移到服务器时间轴
@@ -248,6 +253,10 @@
     { id: 'bag',        label: '11. 礼包开启',    default: true,  schedule: 'daily' },
     { id: 'recipe',     label: '12. 食谱升级',    default: true,  schedule: 'recipe' },    // 默认开；目标等级/学习开关可调
     { id: 'guardian',   label: '13. 守护者(爆裂)', default: true, schedule: 'guardian' },
+    { id: 'dailyFriend', label: '每日好友项目', default: true, schedule: 'daily-project', hidden: true },
+    { id: 'dailyBar',    label: '每日酒吧项目', default: true, schedule: 'daily-project', hidden: true },
+    { id: 'extraWish',   label: '额外许愿项目', default: true, schedule: 'daily-project', hidden: true },
+    { id: 'vitality',    label: '今日活跃领奖', default: true, schedule: 'reward-twice' },
     // —— 不在 PLAN 内，可单独运行 ——
     { id: 'market',     label: '食材采购(整点)', default: false, schedule: 'hourly' },  // 花钱
   ];
@@ -257,7 +266,34 @@
     if (Utils.gget(`mod_${m.id}_enabled`, null) === null) Utils.gset(`mod_${m.id}_enabled`, m.default);
   });
 
-  const isEnabled = (id) => Utils.gget(`mod_${id}_enabled`, true);
+  const isEnabled = (id) => {
+    if (['dailyFriend', 'dailyBar', 'extraWish'].includes(id)) {
+      return DAILY_PROJECT_DEFS.some(p => p.module === id && projectEnabled(p.id) && projectTarget(p.id) > 0);
+    }
+    return Utils.gget(`mod_${id}_enabled`, true);
+  };
+
+  // 每日项目次数来自“今日活跃”常驻上限；额外许愿不消耗许愿果时推荐0次。
+  // 搬家不属于长期日常，按用户要求不纳入。
+  const DAILY_PROJECT_DEFS = [
+    { id: 'like', label: '点赞/被赞（推荐5次）', recommended: 5, module: 'dailyFriend' },
+    { id: 'dig', label: '翻橱柜（推荐20次）', recommended: 20, module: 'dailyFriend' },
+    { id: 'roach', label: '打蟑螂（推荐15次）', recommended: 15, module: 'dailyFriend' },
+    { id: 'fist', label: '猜拳（与猜杯合计推荐20次）', recommended: 10, module: 'dailyBar' },
+    { id: 'cup', label: '猜酒杯（与猜拳合计推荐20次）', recommended: 10, module: 'dailyBar' },
+    { id: 'number', label: '猜数字（推荐1次）', recommended: 1, module: 'dailyBar' },
+    { id: 'extraWish', label: '额外许愿果（常驻推荐0次）', recommended: 0, module: 'extraWish' },
+  ];
+  DAILY_PROJECT_DEFS.forEach(p => {
+    if (Utils.gget(`project_${p.id}_enabled`, null) === null) Utils.gset(`project_${p.id}_enabled`, p.recommended > 0);
+    if (Utils.gget(`project_${p.id}_count`, null) === null) Utils.gset(`project_${p.id}_count`, p.recommended);
+  });
+  const projectEnabled = (id) => !!Utils.gget(`project_${id}_enabled`, false);
+  const projectTarget = (id) => Math.max(0, Math.min(500, parseInt(Utils.gget(`project_${id}_count`, 0), 10) || 0));
+  const gameDayKey = (date = Utils.getServerTime()) => {
+    const shifted = new Date(date.getTime() - 6 * 3600000);
+    return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}-${String(shifted.getDate()).padStart(2, '0')}`;
+  };
 
   // 餐厅子开关
   const RESTAURANT_SUB_DEFAULTS = {
@@ -312,6 +348,8 @@
         #dxzxx-panel details{margin-top:8px;padding-top:6px;border-top:1px solid #eee;}
         #dxzxx-panel summary{cursor:pointer;font-weight:bold;}
         #dxzxx-panel select{width:100%;padding:4px;margin:4px 0;border:1px solid #ccc;border-radius:4px;font-size:12px;}
+        #dxzxx-panel .project-count{width:48px;padding:2px 3px;border:1px solid #bbb;border-radius:3px;font-size:11px;text-align:center;margin:0 5px;}
+        #dxzxx-panel .project-row label{font-size:11px;line-height:1.25;}
         #dxzxx-panel .label{font-size:11px;color:#555;margin-top:4px;}
         #dxzxx-panel .plan-list{font-size:11px;color:#333;padding:6px 4px;line-height:1.6;max-height:200px;overflow-y:auto;background:#f9f9f9;border-radius:4px;margin-top:4px;}
         #dxzxx-panel .plan-list .step{display:flex;justify-content:space-between;padding:1px 4px;}
@@ -322,7 +360,12 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.15</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.16</h3><div id="dxzxx-rows"></div>
+        <details open>
+          <summary>每日项目（早饭后执行）</summary>
+          <div id="dxzxx-project-rows"></div>
+          <div class="label">按服务器06:00重置；次数按成功动作记账。搬家不执行。</div>
+        </details>
         <details>
           <summary>餐厅子开关</summary>
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
@@ -365,7 +408,7 @@
       document.body.appendChild(panel);
 
       const rows = panel.querySelector('#dxzxx-rows');
-      MODULE_DEFS.forEach(m => {
+      MODULE_DEFS.filter(m => !m.hidden).forEach(m => {
         const enabled = isEnabled(m.id);
         const row = document.createElement('div');
         row.className = 'row';
@@ -373,10 +416,20 @@
         rows.appendChild(row);
       });
 
+      const projectRows = panel.querySelector('#dxzxx-project-rows');
+      DAILY_PROJECT_DEFS.forEach(p => {
+        const enabled = projectEnabled(p.id);
+        const row = document.createElement('div');
+        row.className = 'row project-row';
+        row.innerHTML = `<label>${p.label}</label><input class="project-count" type="number" min="0" max="500" value="${projectTarget(p.id)}" data-project-count="${p.id}"><span class="toggle ${enabled ? 'on' : 'off'}" data-project="${p.id}">${enabled ? '开' : '关'}</span>`;
+        projectRows.appendChild(row);
+      });
+
       panel.querySelectorAll('.toggle').forEach(t => {
         t.addEventListener('click', () => {
           const id = t.dataset.id;
           const sub = t.dataset.sub;
+          const project = t.dataset.project;
           if (id) {
             const cur = t.classList.contains('on');
             Utils.gset(`mod_${id}_enabled`, !cur);
@@ -390,6 +443,13 @@
             }
             // 同步刷新 PLAN 列表显示
             Panel.refreshPlanList();
+          } else if (project) {
+            const cur = t.classList.contains('on');
+            Utils.gset(`project_${project}_enabled`, !cur);
+            t.classList.toggle('on');
+            t.classList.toggle('off');
+            t.textContent = !cur ? '开' : '关';
+            if (Scheduler.isOn()) { Scheduler.computeAll(); Scheduler.scheduleNext(); }
           } else if (sub) {
             const cur = t.classList.contains('on');
             Utils.gset(sub, !cur);
@@ -399,6 +459,14 @@
             t.classList.toggle('off');
             t.textContent = !cur ? '开' : '关';
           }
+        });
+      });
+      panel.querySelectorAll('[data-project-count]').forEach(input => {
+        input.addEventListener('change', () => {
+          const value = Math.max(0, Math.min(500, parseInt(input.value, 10) || 0));
+          input.value = String(value);
+          Utils.gset(`project_${input.dataset.projectCount}_count`, value);
+          if (Scheduler.isOn()) { Scheduler.computeAll(); Scheduler.scheduleNext(); }
         });
       });
 
@@ -484,14 +552,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.15 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.16 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 立即跑一轮全套';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.15`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.16`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -1691,6 +1759,272 @@
     },
   };
 
+  // ==================== 可配置每日项目 ====================
+  const DailyProjectState = {
+    load(key) {
+      const day = gameDayKey();
+      const state = Utils.gget(`project_state_${key}`, null);
+      if (!state || state.day !== day) {
+        const fresh = { day, counts: {}, pending: null, visited: [], tried: [], page: 1 };
+        Utils.gset(`project_state_${key}`, fresh);
+        return fresh;
+      }
+      state.counts ||= {};
+      state.visited ||= [];
+      state.tried ||= [];
+      return state;
+    },
+    save(key, state) { Utils.gset(`project_state_${key}`, state); },
+    remaining(id, state) { return projectEnabled(id) ? Math.max(0, projectTarget(id) - (state.counts[id] || 0)) : 0; },
+  };
+
+  // 好友项目：逐个好友、逐层扫描；只在页面明确返回成功时增加进度。
+  MOD.dailyFriend = {
+    match: (p) => /^\/xz\/friend(?:_0_\d+)?$/.test(p) || /^\/xz\/restaurant_\d+_\d+$/.test(p),
+    schedule: 'daily-project',
+    requiresScheduled: true,
+    async run() {
+      const state = DailyProjectState.load('friend');
+      const text = document.body.textContent || '';
+      if (state.pending) {
+        const { type, signature } = state.pending;
+        const ok = type === 'like' ? /点赞成功|成功点赞|已点赞/.test(text)
+          : type === 'dig' ? /翻橱柜成功|翻柜成功/.test(text)
+          : /打蟑螂成功|清除蟑螂成功|消灭蟑螂/.test(text);
+        if (ok) {
+          state.counts[type] = (state.counts[type] || 0) + 1;
+          Utils.log(`每日好友: ${type} 成功 ${state.counts[type]}/${projectTarget(type)}`);
+        } else {
+          Utils.warn(`每日好友: ${type} 未检测到成功结果，本次不计数`);
+        }
+        if (signature && !state.tried.includes(signature)) state.tried.push(signature);
+        state.pending = null;
+        DailyProjectState.save('friend', state);
+      }
+
+      const needs = ['like', 'dig', 'roach'].some(id => DailyProjectState.remaining(id, state) > 0);
+      if (!needs || /体力不足|无法继续翻|无法继续打/.test(text)) {
+        Utils.log(`每日好友完成: 赞${state.counts.like || 0} 柜${state.counts.dig || 0} 蟑${state.counts.roach || 0}`);
+        return true;
+      }
+
+      if (/^\/xz\/friend/.test(location.pathname)) {
+        const links = Array.from(document.querySelectorAll('a[href^="/xz/restaurant_"]')).filter(a => {
+          const m = (a.getAttribute('href') || '').match(/^\/xz\/restaurant_(\d+)_1$/);
+          return m && !state.visited.includes(m[1]);
+        });
+        if (links.length > 0) {
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(links[0]);
+          return false;
+        }
+        const next = Array.from(document.querySelectorAll('a')).find(a => a.textContent.trim() === '下一页' && /^\/xz\/friend_0_\d+$/.test(a.getAttribute('href') || ''));
+        if (next) {
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(next);
+          return false;
+        }
+        Utils.warn('每日好友: 已扫描全部好友，未完成的项目留待明日/下轮');
+        return true;
+      }
+
+      const match = location.pathname.match(/^\/xz\/restaurant_(\d+)_(\d+)$/);
+      if (!match) return true;
+      const uid = match[1], floor = +match[2];
+      const actions = [
+        ['like', Array.from(document.querySelectorAll("a[onclick^='addLikeOne']"))[0]],
+        ['roach', Array.from(document.querySelectorAll("a[onclick^='killCockroach']"))[0]],
+        ['dig', Array.from(document.querySelectorAll("a[onclick^='digOne']"))[0]],
+      ];
+      for (const [type, button] of actions) {
+        const signature = button ? (type === 'like'
+          ? `like:${uid}`
+          : `${type}:${uid}:${floor}:${button.getAttribute('onclick') || button.textContent.trim()}`) : '';
+        if (button && !state.tried.includes(signature) && DailyProjectState.remaining(type, state) > 0) {
+          state.pending = { type, uid, floor, signature };
+          DailyProjectState.save('friend', state);
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(button);
+          return false;
+        }
+      }
+
+      const nextFloor = Array.from(document.querySelectorAll(`a[href^="/xz/restaurant_${uid}_"]`)).find(a => {
+        const m = (a.getAttribute('href') || '').match(/_(\d+)$/);
+        return m && +m[1] === floor + 1;
+      });
+      if (nextFloor && (DailyProjectState.remaining('dig', state) > 0 || DailyProjectState.remaining('roach', state) > 0)) {
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(nextFloor);
+        return false;
+      }
+      if (!state.visited.includes(uid)) state.visited.push(uid);
+      DailyProjectState.save('friend', state);
+      const back = Array.from(document.querySelectorAll('a')).find(a => /^\/xz\/friend_0_\d+$/.test(a.getAttribute('href') || '') && a.textContent.includes('好友'));
+      if (back) {
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(back);
+        return false;
+      }
+      Utils.warn('每日好友: 找不到好友列表返回链接');
+      return true;
+    },
+  };
+
+  // 酒吧项目：猜拳/猜杯按动作完成次数，猜数字遵守页面每日一次限制。
+  MOD.dailyBar = {
+    match: (p) => ['/xz/bar', '/xz/fist', '/xz/cup', '/xz/number'].includes(p),
+    schedule: 'daily-project',
+    requiresScheduled: true,
+    async run() {
+      const state = DailyProjectState.load('bar');
+      const text = document.body.textContent || '';
+      if (state.pending) {
+        const type = state.pending;
+        if (!/礼券不足|操作失败|无法参与/.test(text)) {
+          state.counts[type] = (state.counts[type] || 0) + 1;
+          Utils.log(`每日酒吧: ${type} ${state.counts[type]}/${projectTarget(type)}`);
+        } else {
+          Utils.warn(`每日酒吧: ${type} 失败，本次不计数`);
+        }
+        state.pending = null;
+        DailyProjectState.save('bar', state);
+      }
+      if (['fist', 'cup', 'number'].every(id => DailyProjectState.remaining(id, state) <= 0)) return true;
+
+      const go = async (href) => {
+        const link = document.querySelector(`a[href="${href}"]`);
+        if (!link) return false;
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(link);
+        return true;
+      };
+
+      if (location.pathname === '/xz/bar') {
+        if (DailyProjectState.remaining('number', state) > 0 && await go('/xz/number')) return false;
+        if (DailyProjectState.remaining('fist', state) > 0 && await go('/xz/fist')) return false;
+        if (DailyProjectState.remaining('cup', state) > 0 && await go('/xz/cup')) return false;
+        return true;
+      }
+
+      if (location.pathname === '/xz/number') {
+        const already = /本期选择数字|今日已参与|已经参与/.test(text);
+        const confirm = Array.from(document.querySelectorAll('a[onclick]')).find(a => (a.getAttribute('onclick') || '') === 'guessNumber()');
+        if (DailyProjectState.remaining('number', state) > 0 && confirm && !already) {
+          state.pending = 'number';
+          DailyProjectState.save('bar', state);
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(confirm);
+          return false;
+        }
+        if (already && DailyProjectState.remaining('number', state) > 0) {
+          state.counts.number = projectTarget('number');
+          DailyProjectState.save('bar', state);
+        }
+        return (await go('/xz/bar')) ? false : true;
+      }
+
+      if (location.pathname === '/xz/fist') {
+        const buttons = Array.from(document.querySelectorAll("a[onclick^='fingerGuessing']"));
+        if (DailyProjectState.remaining('fist', state) > 0 && buttons.length > 0) {
+          state.pending = 'fist';
+          DailyProjectState.save('bar', state);
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(buttons[Math.floor(Math.random() * buttons.length)]);
+          return false;
+        }
+        return (await go('/xz/bar')) ? false : true;
+      }
+
+      if (location.pathname === '/xz/cup') {
+        // 第一轮猜中后页面会诱导用3张券继续；日常只需次数，先领奖退出再开新的一局。
+        const stop = Array.from(document.querySelectorAll("a[onclick^='stopCupGuessing']"))[0];
+        if (stop) {
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(stop);
+          return false;
+        }
+        const buttons = Array.from(document.querySelectorAll("a[onclick^='cupGuessing']"));
+        if (DailyProjectState.remaining('cup', state) > 0 && buttons.length > 0) {
+          state.pending = 'cup';
+          DailyProjectState.save('bar', state);
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(buttons[Math.floor(Math.random() * buttons.length)]);
+          return false;
+        }
+        return (await go('/xz/bar')) ? false : true;
+      }
+      return true;
+    },
+  };
+
+  MOD.extraWish = {
+    match: (p) => p === '/xz/wish',
+    schedule: 'daily-project',
+    requiresScheduled: true,
+    async run() {
+      const state = DailyProjectState.load('wish');
+      const text = document.body.textContent || '';
+      if (state.pending) {
+        if (!/许愿失败|许愿果不足|无法许愿/.test(text)) state.counts.extraWish = (state.counts.extraWish || 0) + 1;
+        state.pending = null;
+        DailyProjectState.save('wish', state);
+      }
+      if (DailyProjectState.remaining('extraWish', state) <= 0) return true;
+      const btn = document.querySelector('a[onclick="makeWish(1)"]');
+      if (!btn || /许愿果[^\d]*0/.test(text)) {
+        Utils.warn('额外许愿: 无按钮或许愿果不足');
+        return true;
+      }
+      state.pending = true;
+      DailyProjectState.save('wish', state);
+      await Utils.sleep(Utils.randMs(1, 2));
+      Utils.click(btn);
+      return false;
+    },
+  };
+
+  // 常驻今日活跃：只领取，不在此页做任务。
+  MOD.vitality = {
+    match: (p) => p === '/xz/restaurant_vitality',
+    schedule: 'reward-twice',
+    async run() {
+      const rows = Array.from(document.querySelectorAll('p')).map(p => p.textContent.replace(/\s+/g, ' ').trim());
+      const readProgress = (label) => {
+        const row = rows.find(t => t.includes(label));
+        const m = row?.match(/(\d+)\s*\/\s*(\d+)/);
+        return m ? +m[1] : 0;
+      };
+      const friend = DailyProjectState.load('friend');
+      friend.counts.like = Math.max(friend.counts.like || 0, readProgress('点赞/被赞'));
+      friend.counts.dig = Math.max(friend.counts.dig || 0, readProgress('翻橱柜'));
+      friend.counts.roach = Math.max(friend.counts.roach || 0, readProgress('打蟑螂'));
+      DailyProjectState.save('friend', friend);
+      const bar = DailyProjectState.load('bar');
+      const combined = readProgress('酒吧猜拳/猜酒杯');
+      const fistFromPage = Math.min(projectTarget('fist'), combined);
+      bar.counts.fist = Math.max(bar.counts.fist || 0, fistFromPage);
+      bar.counts.cup = Math.max(bar.counts.cup || 0, Math.max(0, combined - fistFromPage));
+      bar.counts.number = Math.max(bar.counts.number || 0, readProgress('酒吧猜数字'));
+      DailyProjectState.save('bar', bar);
+
+      const phase = Utils.gget(PHASE_KEY, null);
+      if (phase?.id === 'vitalityProbe') {
+        Utils.log('今日活跃: 已同步真实项目进度（早饭前检查，不领奖）');
+        return true;
+      }
+      const claim = Array.from(document.querySelectorAll("a[onclick^='addVitalityAward']"))[0];
+      if (!claim) {
+        Utils.log('今日活跃: 无可领取');
+        return true;
+      }
+      await Utils.sleep(Utils.randMs(1, 2));
+      Utils.click(claim);
+      Utils.log('今日活跃: 领取第一项，刷新后继续');
+      return false;
+    },
+  };
+
   // ----- 13. 季节签到活动 -----
   MOD.season = {
     match: (p) => p === '/xz/activity_season',
@@ -1774,10 +2108,22 @@
     { id: 'wish',    module: 'wish',    target: '/xz/wish',            nav: '许愿',             slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 15000 },
     { id: 'god',     module: 'god',     target: '/xz/god',             nav: '食神',             slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 5000 },
     { id: 'box',     module: 'box',     target: '/xz/box',             nav: '酒吧', route: [{ text: '酒吧', href: '/xz/bar' }, { text: '开宝箱', href: '/xz/box' }], slot: '7:30', jitterMin: 0, jitterMax: 15, runOnce: true, runMs: 8000 },
-    { id: 'season',  module: 'season',  target: '/xz/activity_season', nav: '>>夏日签到活动<<', slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 5000 },
-    { id: 'egg',     module: 'egg',     target: '/xz/activity_egg',    nav: '>>小镇扭蛋活动<<', slot: '7:30',  jitterMin: 0,   jitterMax: 15, runOnce: true, runMs: 8000 },
     { id: 'foodCoupon', module: 'foodCoupon', target: '/xz/warehouse', nav: '仓库', slot: '7:30', jitterMin: 0, jitterMax: 15, runOnce: true, runMs: 30000 },
     { id: 'bag',     module: 'bag',     target: '/xz/warehouse_2_0',   nav: '仓库', route: [{ text: '仓库', href: '/xz/warehouse' }, { text: '礼包', href: '/xz/warehouse_2_0' }], slot: '7:30', jitterMin: 0, jitterMax: 15, runOnce: true, runMs: 8000 },
+
+    // 早饭后每日项目。资源项目用独立面板开关/次数控制，搬家不纳入。
+    { id: 'vitalityProbe', module: 'vitality', target: '/xz/restaurant_vitality', nav: '今日活跃', slot: '7:40', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 5000 },
+    { id: 'dailyFriend', module: 'dailyFriend', target: '/xz/friend', nav: '好友', route: [{ text: '好友', href: '/xz/friend' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 180000 },
+    { id: 'dailyBar', module: 'dailyBar', target: '/xz/bar', nav: '广场', route: [{ text: '广场', href: '/xz/square' }, { text: '酒吧', href: '/xz/bar' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 180000 },
+    { id: 'extraWish', module: 'extraWish', target: '/xz/wish', nav: '许愿', slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 60000 },
+
+    // 早饭项目完成后领奖；晚饭后只复查领奖。临时活动入口消失时 optional 跳过。
+    { id: 'vitalityMorning', module: 'vitality', target: '/xz/restaurant_vitality', nav: '今日活跃', slot: '8:30', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 10000 },
+    { id: 'seasonMorning', module: 'season', target: '/xz/activity_season', nav: '>>夏日签到活动<<', slot: '8:30', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 10000, optional: true },
+    { id: 'eggMorning', module: 'egg', target: '/xz/activity_egg', nav: '>>小镇扭蛋活动<<', slot: '8:30', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 30000, optional: true },
+    { id: 'vitalityEvening', module: 'vitality', target: '/xz/restaurant_vitality', nav: '今日活跃', slot: '18:30', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 10000 },
+    { id: 'seasonEvening', module: 'season', target: '/xz/activity_season', nav: '>>夏日签到活动<<', slot: '18:30', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 10000, optional: true },
+    { id: 'eggEvening', module: 'egg', target: '/xz/activity_egg', nav: '>>小镇扭蛋活动<<', slot: '18:30', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 30000, optional: true },
 
     // 24h 独立硬定时（严格从上次跑完算起 24h）
     { id: 'guardian', module: 'guardian', target: '/xz/guardian', nav: '神殿', route: [{ text: '神殿', href: '/xz/temple' }, { text: '挑战守护者', href: '/xz/guardian' }], slot: '24h', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 10000 },
@@ -1980,6 +2326,14 @@
           return this.onPageLoad(currentPath);
         }
         if (await this.navigatePhase(phase, currentPath)) return;
+        const missingEntry = ALL_ENTRIES().find(e => e.id === phase.id);
+        if (missingEntry?.optional) {
+          Utils.log(`调度器: 可选入口 ${phase.id} 不存在，按本次已检查处理`);
+          Utils.gset(PHASE_KEY, { state: 'returning', id: phase.id, module: phase.module });
+          if (currentPath === '/xz/') this.onReturnFromTarget({ id: phase.id, module: phase.module });
+          else await this.navigateHome();
+          return;
+        }
         Utils.warn(`调度器: ${phase.id} 无法从 ${currentPath} 继续导航，5min 后重试`);
         const retryAt = Utils.getServerTime().getTime() + 300000;
         Utils.gset(`sched_${phase.id}_nextAt`, retryAt);
@@ -2210,6 +2564,11 @@
 
       const phase = Utils.gget(PHASE_KEY, null);
       if (!await this.navigatePhase(phase, location.pathname)) {
+        if (entry.optional) {
+          Utils.log(`调度器: 可选入口 ${entry.id} 不存在，跳过本轮`);
+          this.onReturnFromTarget({ id: entry.id, module: entry.module });
+          return;
+        }
         Utils.warn(`调度器: 找不到 ${entry.id} 的首跳真实链接，5min 后重试`);
         const retryAt = Utils.getServerTime().getTime() + 300000;
         entry.nextRunAt = retryAt;
@@ -2491,11 +2850,20 @@
   const Router = {
     async run() {
       const path = location.pathname;
+      const activePhase = Scheduler.isOn() ? Utils.gget(PHASE_KEY, null) : null;
       Utils.log(`路由: ${path}`);
       let matched = 0;
       for (const [key, mod] of Object.entries(MOD)) {
         if (mod.match(path)) {
           matched++;
+          if (mod.requiresScheduled && activePhase?.module !== key) {
+            Utils.log(`↪ ${key} 仅在每日项目调度阶段运行`);
+            continue;
+          }
+          if (activePhase && ['navigating', 'running'].includes(activePhase.state) && activePhase.module !== key) {
+            Utils.log(`↪ ${key} 与当前调度阶段 ${activePhase.module} 隔离`);
+            continue;
+          }
           const inPlan = AutoPilot.PLAN.some(step => step.module === key);
           if (AutoPilot.isOn() && inPlan) {
             Utils.log(`↪ ${key} 由 AutoPilot 独占，Router 不重复执行`);
