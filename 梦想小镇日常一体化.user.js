@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.38
+// @name         梦想小镇日常一体化 v3.39
 // @namespace    http://tampermonkey.net/
-// @version      3.38
+// @version      3.39
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.39 变更（2026-07-14 面板按钮位置稳定）
+ * - 面板显示前先计算完整调度列表，禁止状态内容晚到后推动按钮
+ * - 调度状态区固定110px高度；运行中/空闲/列表刷新时控制按钮位置不变
+ *
  * v3.38 变更（2026-07-14 面板首屏稳定）
  * - userscript提前到document-start注册，减少页面加载后面板延迟出现
  * - 面板先隐藏完成状态填充，强制展开长期调度器后一次性显示，消除折叠闪动
@@ -206,7 +210,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.38';
+  const SCRIPT_VERSION = '3.39';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -438,7 +442,7 @@
         #dxzxx-panel .single-run{width:auto;padding:1px 7px;margin:0;background:#4CAF50;color:#fff;font-size:11px;font-weight:normal;flex:0 0 auto;}
         #dxzxx-panel #dxzxx-rows .row.current{background:#FFE082;border-radius:3px;font-weight:bold;}
         #dxzxx-sched-wrap>div{line-height:1.25;}
-        #dxzxx-sched-status{max-height:110px;overflow-y:auto;}
+        #dxzxx-sched-status{height:110px;max-height:110px;overflow-y:auto;box-sizing:border-box;}
         #dxzxx-sched-list{display:none;}
         @media (max-width:620px){#dxzxx-panel{left:10px;right:10px;width:auto;}#dxzxx-panel .panel-columns,#dxzxx-rows,#dxzxx-project-rows{grid-template-columns:1fr;}}
         #dxzxx-fab{position:fixed;top:10px;right:10px;z-index:99999;background:#4fe;color:#000;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:bold;box-shadow:0 2px 8px rgba(0,0,0,.2);font-size:16px;}
@@ -3420,8 +3424,12 @@
       Utils.gset('sched_energy_lastResetDay', null);
       Utils.gset('scheduler_schema_version', 3);
     }
+    // 先填充全部nextRunAt，再创建/显示面板；否则调度列表晚到会推动右侧按钮位置。
+    if (Scheduler.isOn()) {
+      Scheduler.computeAll();
+      Scheduler.startWatchdog();
+    }
     Panel.create();
-    if (Scheduler.isOn()) Scheduler.startWatchdog();
     // 主页加载：若 AutoPilot 开着，显示状态
     if (AutoPilot.isOn()) {
       const state = Utils.gget('autopilot_state', {});

@@ -15,16 +15,21 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.38 metadata and shared panel version", "// @version      3.38" in text and "const SCRIPT_VERSION = '3.38';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.39 metadata and shared panel version", "// @version      3.39" in text and "const SCRIPT_VERSION = '3.39';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
+require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
+init_start = text.index("  function init() {")
+init_end = text.index("  if (document.readyState", init_start)
+init_block = text[init_start:init_end]
+require("scheduler list computes before panel becomes visible", init_block.index("Scheduler.computeAll();") < init_block.index("Panel.create();"))
 require("panel has no stale hardcoded title", "梦想小镇日常 v3.18" not in text and "梦想小镇日常 v3.20" not in text)
 require("panel doubles desktop width", "width:560px" in text and "box-sizing:border-box" in text)
 require("panel control rows use two columns", "#dxzxx-rows,#dxzxx-project-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" in text)
 require("panel configuration area uses two columns", 'class="panel-columns"' in text and 'class="panel-column"' in text)
 require("panel details default open", text.count("<details open") >= 5)
 require("panel action buttons use two columns", 'class="panel-actions"' in text and "grid-template-columns:repeat(2,minmax(0,1fr));gap:0 6px" in text)
-require("panel scheduler information uses freed space", "#dxzxx-sched-status{max-height:110px" in text)
+require("panel scheduler information uses freed space", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
 require("panel falls back to one column on narrow screens", "@media (max-width:620px)" in text and "grid-template-columns:1fr" in text)
 require("panel enlarges font while overriding site line height", "font-size:12px;line-height:1.25;width:560px" in text and "font-size:12px;line-height:1.2;" in text)
 require("panel scheduler inner box overrides site line height", "#dxzxx-sched-wrap>div{line-height:1.25;}" in text)
@@ -213,7 +218,7 @@ require("scheduler returns home only for due task", "${due.id} 已到点，从 $
 require("scheduler start does not force home", "启动调度器不打断手动浏览" in text and "this.navigateHome();\n      }" not in text[text.index("    start() {"):text.index("    stop(reason", text.index("    start() {"))])
 require("due task keeps original time while returning home", "保留原到点时间" in text and "推后 1min" not in text)
 require("scheduler keeps timer alive on manual pages", "任何页面都维持计时，但不主动离开手动浏览页" in text and "if (currentPath === '/xz/')" not in text[text.index("// ---- 无 phase：任何页面"):text.index("// ---- phase=navigating")])
-require("enabled scheduler restores watchdog after reload", "if (Scheduler.isOn()) Scheduler.startWatchdog();" in text)
+require("enabled scheduler restores watchdog after reload", "if (Scheduler.isOn()) {" in init_block and "Scheduler.startWatchdog();" in init_block)
 require("scheduler prevents watchdog timer double fire", "忽略重复触发 ${entry.id}" in text and "const existingPhase = Utils.gget(PHASE_KEY, null);" in text)
 
 print(f"\nAll regression checks passed: {SCRIPT}")
