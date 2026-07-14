@@ -15,7 +15,8 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.20 metadata and panel", "// @version      3.20" in text and "日常一体化 v3.20" in text)
+require("v3.21 metadata and shared panel version", "// @version      3.21" in text and "const SCRIPT_VERSION = '3.21';" in text and "v${SCRIPT_VERSION}" in text)
+require("panel has no stale hardcoded title", "梦想小镇日常 v3.18" not in text and "梦想小镇日常 v3.20" not in text)
 require("server time accepts current and legacy labels", "/(?:驯鹿|家园)报时[：:]/" in text)
 require("server clock advances from static page sample", "_serverClockCapturedAt" in text and "localNow - this._serverClockCapturedAt" in text)
 
@@ -110,6 +111,7 @@ require("scheduler supports multi-page navigation", "async navigatePhase(phase, 
 require("scheduler bag route is two-step", "route: [{ text: '仓库', href: '/xz/warehouse' }, { text: '礼包', href: '/xz/warehouse_2_0' }]" in text)
 require("scheduler guardian route is two-step", "{ text: '挑战守护者', href: '/xz/guardian' }" in text)
 require("scheduler recipe route is dynamic", "hrefPattern: '^/xz/cookbook_\\\\d+_3_1$'" in daily and "target: '/xz/cookbook_8_3_1'" not in daily)
+require("scheduler restaurant route uses real href without mutable text", "id: 'restaurant', module: 'restaurant', target: '/xz/restaurant', nav: '餐厅', route: [{ href: '/xz/restaurant' }]" in text)
 require("scheduler supports pattern navigation", "new RegExp(step.hrefPattern).test(href)" in text and "new RegExp(nav.hrefPattern).test(href)" in text)
 require("24h schedules have no cumulative jitter", "slot: '24h', jitterMin: 0, jitterMax: 0" in daily and "jitterMax: 60" not in daily)
 require("scheduler recomputes all tasks after return", "this.computeAll();\n        this.scheduleNext();" in text)

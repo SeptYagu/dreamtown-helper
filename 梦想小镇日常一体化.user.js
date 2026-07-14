@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.20
+// @name         梦想小镇日常一体化 v3.21
 // @namespace    http://tampermonkey.net/
-// @version      3.20
+// @version      3.21
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.21 变更（2026-07-14 餐厅真实入口与版本显示修复）
+ * - 餐厅调度按真实 /xz/restaurant href 导航，不依赖首页动态用户名/“我的餐厅”文字
+ * - 面板创建与状态刷新统一使用单一版本常量，避免刷新后标题回退到旧版本
+ *
  * v3.20 变更（2026-07-14 自动驾驶纳入市场后的完成状态修复）
  * - 市场无后续购买、冷却或资源不足时显式返回完成，避免调度器永久保持 running
  * - 市场点击购买后显式保持未完成，刷新后继续检查；面板标题同步当前版本
@@ -155,6 +159,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
+  const SCRIPT_VERSION = '3.21';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -389,7 +394,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.20</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v${SCRIPT_VERSION}</h3><div id="dxzxx-rows"></div>
         <details open>
           <summary>每日项目（早饭后执行）</summary>
           <div id="dxzxx-project-rows"></div>
@@ -583,14 +588,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.18 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v${SCRIPT_VERSION} <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 立即跑一轮全套';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.18`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v${SCRIPT_VERSION}`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -2270,7 +2275,7 @@
 
     // 餐厅：17-45min 随机循环（页面状态随机：蟑螂可能随时出，翻柜随机）
     {
-      id: 'restaurant', module: 'restaurant', target: '/xz/restaurant', nav: '我的餐厅', runMs: 30000,
+      id: 'restaurant', module: 'restaurant', target: '/xz/restaurant', nav: '餐厅', route: [{ href: '/xz/restaurant' }], runMs: 30000,
       computeNext() {
         return Utils.getServerTime().getTime() + Utils.randMs(17 * 60, 45 * 60);  // 1020-2700s
       },
