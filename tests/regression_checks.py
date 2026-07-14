@@ -15,13 +15,17 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.6 metadata", "// @version      3.6" in text and "日常一体化 v3.6" in text)
+require("v3.7 metadata", "// @version      3.7" in text and "日常一体化 v3.7" in text)
 
 coupon_ids = re.search(r"PROP_IDS:\s*\[([^\]]+)\]", text)
 require("food coupon whitelist exists", coupon_ids is not None)
 ids = [int(value) for value in re.findall(r"\d+", coupon_ids.group(1))]
 require("food coupon uses only legacy 8 ids", ids == [244, 21, 22, 23, 24, 25, 245, 224])
 require("food coupon matches real warehouse", "p === '/xz/warehouse'" in text)
+require("food coupon matches current exchange path", "(?:prop_)?food_random_" in text)
+require("food coupon reads remaining quantity", "const remaining = quantityMatch ? parseInt(quantityMatch[1], 10) : null;" in text)
+require("food coupon returns only after zero", "if (remaining === 0)" in text and "已归零，回仓库" in text)
+require("food coupon uses exchange while nonzero", "if (exchangeBtn && remaining !== 0)" in text)
 require("food coupon has no text fallback", "名字含\"食材\"/\"调料\"/\"随机\"" not in text)
 
 require("bag matches current result URL", r"/\/xz\/(?:prop|open)_bag_/" in text)

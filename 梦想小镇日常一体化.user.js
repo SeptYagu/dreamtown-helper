@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.6
+// @name         梦想小镇日常一体化 v3.7
 // @namespace    http://tampermonkey.net/
-// @version      3.6
+// @version      3.7
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.7 变更（2026-07-14 全功能实测修复）
+ * - 食材券匹配当前 /xz/prop_food_random_* 页面，按实际剩余数量点击“全部兑换”
+ * - 兑换至 0 后返回仓库继续下一种，直到白名单券全部消失才完成
+ *
  * v3.6 变更（2026-07-13 实测修复）
  * - AutoPilot 启动时清旧紧急停止标志；首页 advance 主动续跑连续关闭模块
  * - Scheduler.start 删除不存在的 init() 调用，直接计算并安排全部任务
@@ -261,7 +265,7 @@
 
       const panel = document.createElement('div');
       panel.id = 'dxzxx-panel';
-      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.6</h3><div id="dxzxx-rows"></div>
+      panel.innerHTML = `<h3>🦌 梦想小镇日常 v3.7</h3><div id="dxzxx-rows"></div>
         <details>
           <summary>餐厅子开关</summary>
           <div class="row sub"><label>🪳 自动打蟑螂</label><span class="toggle ${Utils.gget('restaurant_cockroach', false) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', false) ? '开' : '关'}</span></div>
@@ -421,14 +425,14 @@
         const step = AutoPilot.PLAN[stepIdx];
         const stepName = step ? step.module : '已完成';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.6 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.7 <span style="color:#FF9800;font-size:11px;">▶ ${stepIdx + 1}/${AutoPilot.PLAN.length} ${stepName}</span>`;
       } else {
         btn.textContent = '🚀 自动跑全套日常';
         btn.style.background = '#FF9800';
         btn.style.color = '#000';
         if (stopBtn) stopBtn.style.display = 'none';
         const h3 = document.querySelector('#dxzxx-panel h3');
-        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.6`;
+        if (h3) h3.innerHTML = `🦌 梦想小镇日常 v3.7`;
       }
       // 同步刷新 PLAN 列表
       Panel.refreshPlanList();
@@ -910,7 +914,7 @@
   //   - 找不到任何 propUrl 时直接返回（无券可领），不再死循环
   //   - /xz/food_random_<level> 处理完成后自动点"返回仓库"
   MOD.foodCoupon = {
-    match: (p) => p === '/xz/warehouse' || p === '/xz/warehouse_1_0' || /\/xz\/food_random_/.test(p),
+    match: (p) => p === '/xz/warehouse' || p === '/xz/warehouse_1_0' || /\/xz\/(?:prop_)?food_random_/.test(p),
     schedule: 'daily',
     CONFIG: {
       // 仅保留旧脚本确认过的 8 种；严禁把小喇叭/礼券/体力卡等加入候选
@@ -919,14 +923,22 @@
     async run() {
       const path = location.pathname;
 
-      // 7.1 食材随机页（/xz/food_random_<level>）：点"兑换"按钮
-      if (/\/xz\/food_random_/.test(path)) {
+      // 7.1 食材随机页（当前 /xz/prop_food_random_<level>，兼容旧路径）
+      if (/\/xz\/(?:prop_)?food_random_/.test(path)) {
         const level = path.split('_').pop().replace(/\D/g, '') || path.split('_').pop();
         const allBtns = Array.from(document.querySelectorAll('a'));
+        const quantityText = Array.from(document.querySelectorAll('p')).map(p => p.textContent || '')
+          .find(text => /当前拥有[\s\S]*×\s*\d+/.test(text)) || '';
+        const quantityMatch = quantityText.match(/×\s*(\d+)/);
+        const remaining = quantityMatch ? parseInt(quantityMatch[1], 10) : null;
+        if (remaining === 0) {
+          Utils.log(`食材券: level=${level} 已归零，回仓库`);
+          return this.returnToWarehouse() ? false : true;
+        }
         // 优先找 random(level, 1000) 这种"全部兑换"
         let exchangeBtn = allBtns.find(a => {
           const oc = a.getAttribute('onclick') || '';
-          return oc.includes(`random(${level},1000)`) || oc.includes(`random(${parseInt(level)},1000)`);
+          return oc.includes(`random(${level},1000)`) || oc.includes(`random(${parseInt(level, 10)},1000)`);
         });
         // 退化：找任何 random(level, N) 按钮
         if (!exchangeBtn) {
@@ -935,10 +947,10 @@
             return /random\(\s*\d+\s*,\s*\d+\s*\)/.test(oc);
           });
         }
-        if (exchangeBtn) {
+        if (exchangeBtn && remaining !== 0) {
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(exchangeBtn);
-          Utils.log(`食材券: 兑换 level=${level}`);
+          Utils.log(`食材券: 全部兑换 level=${level}, remaining=${remaining ?? 'unknown'}`);
           return false;
         }
         // 没有兑换按钮 → 直接返回
