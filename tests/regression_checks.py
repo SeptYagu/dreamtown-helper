@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.32 metadata and shared panel version", "// @version      3.32" in text and "const SCRIPT_VERSION = '3.32';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.33 metadata and shared panel version", "// @version      3.33" in text and "const SCRIPT_VERSION = '3.33';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel has no stale hardcoded title", "梦想小镇日常 v3.18" not in text and "梦想小镇日常 v3.20" not in text)
 require("panel doubles desktop width", "width:560px" in text and "box-sizing:border-box" in text)
 require("panel control rows use two columns", "#dxzxx-rows,#dxzxx-project-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))" in text)
@@ -70,6 +70,7 @@ require("router yields plan modules", "由 AutoPilot 独占，Router 不重复�
 require("router does not mark action-in-progress complete", "仍有后续动作，不写完成标志" in text)
 require("autopilot food coupon route is real", "{ module: 'foodCoupon', navSteps: [{ text: '仓库'," in text)
 require("autopilot includes market purchase", "{ module: 'market',     navSteps: [{ text: '菜场'," in text)
+require("autopilot includes daily NPC visits", "{ module: 'dailyNpc',   navSteps: [{ text: '菜场'," in text)
 require("autopilot includes daily friend projects", "{ module: 'dailyFriend', navSteps: [{ text: '好友'," in text)
 require("autopilot includes daily bar projects", "{ module: 'dailyBar',   navSteps: [{ text: '广场'," in text)
 require("autopilot includes extra wish project", "{ module: 'extraWish',  navSteps: [{ text: '许愿'," in text)
@@ -87,7 +88,8 @@ require("daily project counts persist on input and change", "addEventListener('i
 require("daily projects use 6am game day", "date.getTime() - 6 * 3600000" in text)
 require("daily friend actions are configurable", "['like', 'dig', 'roach'].some" in text and "DailyProjectState.remaining(type, state)" in text)
 require("daily bar actions are configurable", "DailyProjectState.remaining('fist'" in text and "DailyProjectState.remaining('cup'" in text and "DailyProjectState.remaining('number'" in text)
-require("daily bar visits Wenjie once", "拜访雯姐（推荐1次）" in text and "a[onclick=\"see()\"]" in text and "今日已拜访雯姐" in text)
+require("daily NPC project combines both visits", "拜访NPC（推荐2次）" in text and "visitHere('garden', '菜园姐')" in text and "visitHere('wenjie', '雯姐')" in text)
+require("daily NPC is independent from paid market", "module: 'dailyNpc'" in text and "['dailyFriend', 'dailyBar', 'dailyNpc', 'extraWish']" in text)
 require("friend list prioritizes roach markers", "img[src=\"/readImg/xz_cockroach\"]" in text and "const marked = links.filter(hasRoachMark);" in text)
 require("friend floors follow roach markers", "const markedRoachFloor = floorLinks.find" in text and "Utils.click(floorToVisit);" in text)
 require("autopilot hands off to scheduler", "自动驾驶: 已交接长期循环调度器" in text and "Scheduler.start();" in text)
@@ -99,7 +101,8 @@ require("scheduled modules are isolated", "与当前调度阶段" in text and "m
 
 require("market discount is exactly 666", "DISCOUNT_PRICE: 666" in text and "price === this.CONFIG.DISCOUNT_PRICE" in text)
 require("market discount dedupes by server hour", "market_last_discount_hour" in text)
-require("market does not buy daily market rows", "buyDayFood" not in text and "DAY_LEVEL1_MAX" not in text and "DAY_LEVEL2_MAX" not in text)
+require("market parses current daily market rows", "a[onclick^='buyDayFood']" in text and r"buyDayFood\((\d+),(\d+),(\d+)\)" in text)
+require("market keeps old staple thresholds", "LEVEL1_TARGET: 950" in text and "LEVEL1_MAX_PRICE: 519" in text and "LEVEL2_TARGET: 950" in text and "LEVEL2_MAX_PRICE: 2650" in text and "FORCE_BUY_2: ['鸡肉', '猪肉']" in text)
 require("market claims Tuesday reserve coupon first", "a[onclick^='getEverydayReserve']" in text and "已领取周二日常食材预定券" in text)
 require("market claim remains in progress across refresh", "Utils.click(reserveClaim);" in text and "return false;" in text)
 market_run = text[text.index("MOD.market = {"):text.index("// ----- 7. 食材券")]
@@ -151,7 +154,7 @@ require("recipe returns through history instead of arbitrary cookbook link", "hi
 
 require("scheduler persists fixed plans", "Utils.gset(`sched_${e.id}_nextAt`, e.nextRunAt);" in text)
 require("scheduler preserves overdue fixed plans", "e.nextRunAt = saved > 0 ? saved : this.computeFixedNext(e, nowMs);" in text)
-require("scheduler preserves overdue dynamic plans", "e.nextRunAt = saved > 0 ? saved : e.computeNext();" in text)
+require("scheduler preserves overdue dynamic plans", "saved > 0 ? saved : e.computeNext()" in text)
 require("scheduler no longer discards overdue plans", "saved > nowMs ? saved" not in text)
 require("scheduler start does not call missing init", "this.init();" not in text)
 require("scheduler start computes immediately on home", "this.computeAll();\n        this.scheduleNext();" in text)
@@ -163,6 +166,7 @@ require("scheduler restaurant route uses real href without mutable text", "id: '
 dynamic = text[text.index("const DYNAMIC_SCHEDULE = ["):text.index("const ALL_ENTRIES")]
 require("scheduler mailbox follows restaurant entry", dynamic.index("id: 'restaurant'") < dynamic.index("id: 'mailboxAfterRestaurant'") < dynamic.index("id: 'facility'"))
 require("scheduler mailbox uses real system inbox href", "id: 'mailboxAfterRestaurant', module: 'mailbox', target: '/xz/mailbox_0_1'" in dynamic and "route: [{ href: '/xz/mailbox_0_1' }]" in dynamic)
+require("scheduler mailbox is chained only", "chainedOnly: true" in dynamic and "restaurantLast > mailboxLast" in dynamic and "e.chainedOnly ? e.computeNext()" in text)
 require("scheduler forces mailbox immediately after restaurant return", "phase.id === 'restaurant' && isEnabled('mailbox')" in text and "void this.fireToTarget(mailboxEntry);" in text and "确保其它积压任务不能插到两者之间" in text)
 restaurant_plan = text.index("{ module: 'restaurant', navSteps:")
 mailbox_plan = text.index("{ module: 'mailbox',    navSteps:")

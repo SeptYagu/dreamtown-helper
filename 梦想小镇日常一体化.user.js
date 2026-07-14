@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.32
+// @name         梦想小镇日常一体化 v3.33
 // @namespace    http://tampermonkey.net/
-// @version      3.32
+// @version      3.33
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.33 变更（2026-07-15 菜场、NPC 与链式邮箱修复）
+ * - 菜场兼容当前每日菜场 buyDayFood(区块,索引,id)，恢复按旧阈值补足1级菜及指定2级菜
+ * - 菜园姐与雯姐合并为独立“拜访NPC（推荐2次）”每日项目，不受付费菜场采购开关影响
+ * - 系统邮箱改为只在餐厅实际完成后触发，清除残留的独立邮箱倒计时与空转
+ *
  * v3.26 变更（2026-07-14 调度器休眠恢复）
  * - 新增60秒看门狗及focus/visibility唤醒，恢复浏览器后台冻结后遗失的定时器/Promise
  * - 自动续跑停滞phase、立即触发主页过期任务，并把无phase子页带回首页
@@ -180,7 +185,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.32';
+  const SCRIPT_VERSION = '3.33';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -310,6 +315,7 @@
     { id: 'guardian',   label: '13. 守护者(爆裂)', default: true, schedule: 'guardian' },
     { id: 'dailyFriend', label: '每日好友项目', default: true, schedule: 'daily-project', hidden: true },
     { id: 'dailyBar',    label: '每日酒吧项目', default: true, schedule: 'daily-project', hidden: true },
+    { id: 'dailyNpc',    label: '每日NPC拜访', default: true, schedule: 'daily-project', hidden: true },
     { id: 'extraWish',   label: '额外许愿项目', default: true, schedule: 'daily-project', hidden: true },
     { id: 'vitality',    label: '今日活跃领奖', default: true, schedule: 'reward-twice' },
     // —— 付费模块：在 PLAN 内，但默认关闭 ——
@@ -322,7 +328,7 @@
   });
 
   const isEnabled = (id) => {
-    if (['dailyFriend', 'dailyBar', 'extraWish'].includes(id)) {
+    if (['dailyFriend', 'dailyBar', 'dailyNpc', 'extraWish'].includes(id)) {
       return DAILY_PROJECT_DEFS.some(p => p.module === id && projectEnabled(p.id) && projectTarget(p.id) > 0);
     }
     if (id === 'mailbox') {
@@ -340,9 +346,13 @@
     { id: 'fist', label: '猜拳（与猜杯合计推荐20次）', recommended: 10, module: 'dailyBar' },
     { id: 'cup', label: '猜酒杯（与猜拳合计推荐20次）', recommended: 10, module: 'dailyBar' },
     { id: 'number', label: '猜数字（推荐1次）', recommended: 1, module: 'dailyBar' },
-    { id: 'wenjie', label: '拜访雯姐（推荐1次）', recommended: 1, module: 'dailyBar' },
+    { id: 'npc', label: '拜访NPC（推荐2次）', recommended: 2, module: 'dailyNpc' },
     { id: 'extraWish', label: '额外许愿果（常驻推荐0次）', recommended: 0, module: 'extraWish' },
   ];
+  // 从 v3.32 的“拜访雯姐”开关迁移；次数升级为两个 NPC 各一次。
+  if (Utils.gget('project_npc_enabled', null) === null && Utils.gget('project_wenjie_enabled', null) !== null) {
+    Utils.gset('project_npc_enabled', !!Utils.gget('project_wenjie_enabled', true));
+  }
   DAILY_PROJECT_DEFS.forEach(p => {
     if (Utils.gget(`project_${p.id}_enabled`, null) === null) Utils.gset(`project_${p.id}_enabled`, p.recommended > 0);
     if (Utils.gget(`project_${p.id}_count`, null) === null) Utils.gset(`project_${p.id}_count`, p.recommended);
@@ -960,7 +970,7 @@
   // ----- 6. 食材采购（特价 + 常驻菜补货）-----
   // 整合自原 v5.3 整点食材采购助手的关键逻辑：
   //   1) 特价（buyDiscountFood，6-23 整点刷新）— 全买
-  //   2) 常驻菜（buyFood：input + 按钮）— 库存 < 950 时补到 950
+  //   2) 每日菜场（当前 buyDayFood；兼容旧 buyFood）— 库存 < 950 时补到 950
   //      1 级：≤519金 → 强制补到 950
   //      2 级：≤2650金 → 强制补到 950；鸡肉/猪肉无视价格强制补
   //   3) 金币不足 → 24h 冷却（GM 持久化），避免反复失败
@@ -977,7 +987,7 @@
       LEVEL2_TARGET: 950,        // 2 级菜目标库存
       LEVEL2_MAX_PRICE: 2650,    // 2 级菜触发补货的最高单价
       FORCE_BUY_2: ['鸡肉', '猪肉'],  // 强制购买的 2 级菜（无视价格）
-      BUY_CAP_PER_FIRE: 999,     // 单次 buyFood 输入框上限
+      BUY_CAP_PER_FIRE: 999,     // 单次购买输入框上限
       DISCOUNT_PRICE: 666,       // 与旧脚本一致：特价仅买 666 金币
     },
 
@@ -1023,7 +1033,7 @@
         }
       }
 
-      // 6.2 常驻菜补货：解析 [N级]菜名(M) 价格金 + input.s_input + a[onclick^="buyFood"]
+      // 6.2 每日菜场补货：当前页面使用 buyDayFood(section,index,id)，兼容旧 buyFood(index,id)
       const staples = this.parseStapleFoods();
       if (staples.length === 0) {
         Utils.log('市场: 无常驻菜');
@@ -1058,11 +1068,11 @@
       await this.fillBuyAmount(foodToBuy.input, buyAmount);
       await Utils.sleep(Utils.randMs(1, 2));
       Utils.click(foodToBuy.buyButton);
-      Utils.log(`市场: 已点击 buyFood(${foodToBuy.foodIndex}, ${foodToBuy.foodId})`);
+      Utils.log(`市场: 已点击 ${foodToBuy.action}，购买 ${buyAmount} 个 ${foodToBuy.name}`);
       return false;
     },
 
-    // 解析常驻菜：返回 { level, name, currentStock, price, input, buyButton, foodIndex, foodId, element }
+    // 解析每日菜场：返回当前 buyDayFood 或旧 buyFood 的真实购买按钮。
     parseStapleFoods() {
       const out = [];
       const pAll = document.querySelectorAll('.m_room p');
@@ -1073,16 +1083,19 @@
         if (!m) continue;
         const level = +m[1], name = m[2].trim(), currentStock = +m[3], price = +m[4];
         const input = p.querySelector('input.s_input, input[class="s_input"]');
-        const buyBtn = p.querySelector("a[onclick^='buyFood']");
+        const buyBtn = p.querySelector("a[onclick^='buyDayFood'], a[onclick^='buyFood']");
         if (!input || !buyBtn) continue;
         const onclick = buyBtn.getAttribute('onclick') || '';
-        const fm = onclick.match(/buyFood\((\d+),(\d+)\)/);
-        if (!fm) continue;
+        const dayMatch = onclick.match(/buyDayFood\((\d+),(\d+),(\d+)\)/);
+        const legacyMatch = onclick.match(/buyFood\((\d+),(\d+)\)/);
+        if (!dayMatch && !legacyMatch) continue;
+        const foodIndex = +(dayMatch ? dayMatch[2] : legacyMatch[1]);
+        const foodId = +(dayMatch ? dayMatch[3] : legacyMatch[2]);
         out.push({
           level, name, currentStock, price,
           targetStock: level === 1 ? this.CONFIG.LEVEL1_TARGET : this.CONFIG.LEVEL2_TARGET,
           input, buyButton: buyBtn,
-          foodIndex: +fm[1], foodId: +fm[2],
+          foodIndex, foodId, action: onclick.replace(/;$/, ''),
           element: p,
         });
       }
@@ -2110,6 +2123,71 @@
     },
   };
 
+  // 每日 NPC：菜场菜园姐、酒吧雯姐各一次。独立于付费市场采购开关。
+  MOD.dailyNpc = {
+    match: (p) => ['/xz/', '/xz/market', '/xz/square', '/xz/bar'].includes(p),
+    schedule: 'daily-project',
+    requiresScheduled: true,
+    async run() {
+      const state = DailyProjectState.load('npc');
+      const text = document.body.textContent || '';
+      const markVisited = (npcId, label) => {
+        if (!state.visited.includes(npcId)) {
+          state.visited.push(npcId);
+          state.counts.npc = Math.min(projectTarget('npc'), (state.counts.npc || 0) + 1);
+          Utils.log(`每日NPC: ${label} ${state.counts.npc}/${projectTarget('npc')}`);
+        }
+      };
+
+      if (state.pending) {
+        const { npcId, label } = state.pending;
+        if (!/拜访失败|操作失败|今日无法拜访/.test(text)) markVisited(npcId, label);
+        else Utils.warn(`每日NPC: ${label} 拜访失败，本次不计数`);
+        state.pending = null;
+        DailyProjectState.save('npc', state);
+      }
+      if (DailyProjectState.remaining('npc', state) <= 0) return true;
+
+      const go = async (href) => {
+        const link = document.querySelector(`a[href="${href}"]`);
+        if (!link) return false;
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(link);
+        return true;
+      };
+      const visitHere = async (npcId, label) => {
+        if (state.visited.includes(npcId) || DailyProjectState.remaining('npc', state) <= 0) return false;
+        const button = Array.from(document.querySelectorAll('a[onclick="see()"]'))
+          .find(a => a.textContent.trim() === `拜访${label}`);
+        if (!button) {
+          // 拜访按钮消失是服务端的每日已完成态；同步本地进度后继续另一位 NPC。
+          markVisited(npcId, label);
+          DailyProjectState.save('npc', state);
+          return false;
+        }
+        state.pending = { npcId, label };
+        DailyProjectState.save('npc', state);
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(button);
+        Utils.log(`每日NPC: 已点击拜访${label}`);
+        return true;
+      };
+
+      if (location.pathname === '/xz/') return (await go('/xz/market')) ? false : true;
+      if (location.pathname === '/xz/market') {
+        if (await visitHere('garden', '菜园姐')) return false;
+        if (DailyProjectState.remaining('npc', state) <= 0) return true;
+        return (await go('/xz/square')) ? false : true;
+      }
+      if (location.pathname === '/xz/square') return (await go('/xz/bar')) ? false : true;
+      if (location.pathname === '/xz/bar') {
+        if (await visitHere('wenjie', '雯姐')) return false;
+        return true;
+      }
+      return true;
+    },
+  };
+
   // 酒吧项目：猜拳/猜杯按动作完成次数，猜数字遵守页面每日一次限制。
   MOD.dailyBar = {
     match: (p) => ['/xz/bar', '/xz/fist', '/xz/cup', '/xz/number'].includes(p),
@@ -2118,6 +2196,11 @@
     async run() {
       const state = DailyProjectState.load('bar');
       const text = document.body.textContent || '';
+      // 清理 v3.32 可能遗留的旧雯姐 pending；NPC 现由独立模块负责。
+      if (state.pending === 'wenjie') {
+        state.pending = null;
+        DailyProjectState.save('bar', state);
+      }
       if (state.pending) {
         const type = state.pending;
         if (!/礼券不足|操作失败|无法参与/.test(text)) {
@@ -2129,7 +2212,7 @@
         state.pending = null;
         DailyProjectState.save('bar', state);
       }
-      if (['wenjie', 'fist', 'cup', 'number'].every(id => DailyProjectState.remaining(id, state) <= 0)) return true;
+      if (['fist', 'cup', 'number'].every(id => DailyProjectState.remaining(id, state) <= 0)) return true;
 
       const go = async (href) => {
         const link = document.querySelector(`a[href="${href}"]`);
@@ -2140,22 +2223,6 @@
       };
 
       if (location.pathname === '/xz/bar') {
-        if (DailyProjectState.remaining('wenjie', state) > 0) {
-          const visit = Array.from(document.querySelectorAll('a[onclick="see()"]'))
-            .find(a => a.textContent.trim() === '拜访雯姐');
-          if (visit) {
-            state.pending = 'wenjie';
-            DailyProjectState.save('bar', state);
-            await Utils.sleep(Utils.randMs(1, 2));
-            Utils.click(visit);
-            Utils.log('每日酒吧: 已点击拜访雯姐');
-            return false;
-          }
-          // 每日按钮消失就是服务端的已完成态；兼容升级后本地尚无计数的情况。
-          state.counts.wenjie = projectTarget('wenjie');
-          DailyProjectState.save('bar', state);
-          Utils.log('每日酒吧: 今日已拜访雯姐');
-        }
         if (DailyProjectState.remaining('number', state) > 0 && await go('/xz/number')) return false;
         if (DailyProjectState.remaining('fist', state) > 0 && await go('/xz/fist')) return false;
         if (DailyProjectState.remaining('cup', state) > 0 && await go('/xz/cup')) return false;
@@ -2369,6 +2436,7 @@
     // 早饭后每日项目。资源项目用独立面板开关/次数控制，搬家不纳入。
     { id: 'vitalityProbe', module: 'vitality', target: '/xz/restaurant_vitality', nav: '今日活跃', slot: '7:40', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 5000 },
     { id: 'dailyFriend', module: 'dailyFriend', target: '/xz/friend', nav: '好友', route: [{ text: '好友', href: '/xz/friend' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 180000 },
+    { id: 'dailyNpc', module: 'dailyNpc', target: '/xz/market', nav: '菜场', route: [{ text: '菜场', href: '/xz/market' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 30000 },
     { id: 'dailyBar', module: 'dailyBar', target: '/xz/bar', nav: '广场', route: [{ text: '广场', href: '/xz/square' }, { text: '酒吧', href: '/xz/bar' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 180000 },
     { id: 'extraWish', module: 'extraWish', target: '/xz/wish', nav: '许愿', slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 60000 },
 
@@ -2501,11 +2569,13 @@
 
     // 系统邮箱：餐厅收尾回首页后立即检查；平时跟随下一次餐厅，不独立抢跑。
     {
-      id: 'mailboxAfterRestaurant', module: 'mailbox', target: '/xz/mailbox_0_1', nav: '系统邮箱', route: [{ href: '/xz/mailbox_0_1' }], runMs: 30000,
+      id: 'mailboxAfterRestaurant', module: 'mailbox', target: '/xz/mailbox_0_1', nav: '系统邮箱', route: [{ href: '/xz/mailbox_0_1' }], runMs: 30000, chainedOnly: true,
       computeNext() {
         const nowMs = Utils.getServerTime().getTime();
-        const restaurantNext = Utils.gget('sched_restaurant_nextAt', 0);
-        return restaurantNext > nowMs ? restaurantNext + 60000 : nowMs + 3600000;
+        const restaurantLast = Utils.gget('sched_restaurant_lastRun', 0);
+        const mailboxLast = Utils.gget('sched_mailboxAfterRestaurant_lastRun', 0);
+        // 仅补偿“餐厅已完成但邮箱尚未完成”的中断现场；没有餐厅新完成就不生成计划。
+        return restaurantLast > mailboxLast ? Math.max(restaurantLast, nowMs) : 0;
       },
     },
 
@@ -2765,7 +2835,8 @@
 
       DYNAMIC_SCHEDULE.forEach(e => {
         const saved = Utils.gget(`sched_${e.id}_nextAt`, 0);
-        e.nextRunAt = saved > 0 ? saved : e.computeNext();
+        // 链式任务不能保存为独立周期；每次都由上游 lastRun 与自身 lastRun 重新判定。
+        e.nextRunAt = e.chainedOnly ? e.computeNext() : (saved > 0 ? saved : e.computeNext());
         Utils.gset(`sched_${e.id}_nextAt`, e.nextRunAt);
       });
     },
@@ -2993,6 +3064,7 @@
                                          { text: '开宝箱',              hrefMatch: '/xz/box' }] },
       { module: 'foodCoupon', navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' }] },
       { module: 'market',     navSteps: [{ text: '菜场',                hrefMatch: '/xz/market' }] },
+      { module: 'dailyNpc',   navSteps: [{ text: '菜场',                hrefMatch: '/xz/market' }] },
       { module: 'dailyFriend', navSteps: [{ text: '好友',               hrefMatch: '/xz/friend' }] },
       { module: 'dailyBar',   navSteps: [{ text: '广场',                hrefMatch: '/xz/square' },
                                          { text: '酒吧',                hrefMatch: '/xz/bar' }] },
