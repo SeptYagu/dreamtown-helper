@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.45
+// @name         梦想小镇日常一体化 v3.46
 // @namespace    http://tampermonkey.net/
-// @version      3.45
+// @version      3.46
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,9 @@
 // ==/UserScript==
 
 /*
+ * v3.46 变更（2026-07-15 爆裂飞弹真实输入框兼容）
+ * - 真实商店数量框ID为buyNum，同时兼容旧版buy_num；继续保留700/3小额测试规则
+ *
  * v3.45 变更（2026-07-15 爆裂飞弹安全补货测试版）
  * - 爆裂飞弹库存低于700时单次购买3个，用于真实商店小额验收
  * - 精确读取商店“拥有数量”，解析失败安全停止，购买后验证库存确实增长
@@ -239,7 +242,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.45';
+  const SCRIPT_VERSION = '3.46';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -2420,7 +2423,7 @@
           return this.returnFromStore(have, have >= this.REPLENISH_BELOW ? '库存充足' : '本轮补货已经验证');
         }
 
-        const input = document.getElementById('buy_num');
+        const input = document.getElementById('buyNum') || document.getElementById('buy_num');
         const buy = document.querySelector('a[onclick="buyByActivity(0,82,0)"]');
         if (input && buy) {
           input.value = String(this.BUY_COUNT);
