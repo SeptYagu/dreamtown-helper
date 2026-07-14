@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.48
+// @name         梦想小镇日常一体化 v3.49
 // @namespace    http://tampermonkey.net/
-// @version      3.48
+// @version      3.49
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.49 变更（2026-07-15 自动驾驶餐厅提前）
+ * - 餐厅管理由第15步提前到第2步，餐厅后系统邮箱继续紧随其后作为第3步
+ * - 原第2至14步顺次后移，面板编号自动跟随真实AutoPilot顺序
+ * - 今日活跃领奖移到第20步，所有日常项目执行后再进行最终领奖
+ *
  * v3.48 变更（2026-07-15 餐厅蟑螂开关持久化）
  * - 自家餐厅自动打蟑螂改为默认开启，并一次性修复旧版误关的现有配置
  * - 体力不足、操作失败、单轮上限或调度超时只停止当前轮次，不再永久关闭用户开关
@@ -251,7 +256,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.48';
+  const SCRIPT_VERSION = '3.49';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -3599,6 +3604,8 @@
   const AutoPilot = {
     PLAN: [
       { module: 'signIn',     navSteps: [{ text: '签到',                hrefMatch: '/xz/sign_in' }] },
+      { module: 'restaurant', navSteps: [{ text: '餐厅',                hrefMatch: '/xz/restaurant' }] },
+      { module: 'mailbox',    navSteps: [{ text: '邮箱',                 hrefMatch: '/xz/mailbox' }] },
       { module: 'wish',       navSteps: [{ text: '许愿',                hrefMatch: '/xz/wish' }] },
       { module: 'god',        navSteps: [{ text: '食神',                hrefMatch: '/xz/god' }] },
       { module: 'box',        navSteps: [{ text: '酒吧',                hrefMatch: '/xz/bar' },
@@ -3610,12 +3617,9 @@
       { module: 'dailyBar',   navSteps: [{ text: '广场',                hrefMatch: '/xz/square' },
                                          { text: '酒吧',                hrefMatch: '/xz/bar' }] },
       { module: 'extraWish',  navSteps: [{ text: '许愿',                hrefMatch: '/xz/wish' }] },
-      { module: 'vitality',   navSteps: [{ text: '今日活跃',            hrefMatch: '/xz/restaurant_vitality' }] },
       { module: 'season',     navSteps: [{ text: '>>夏日签到活动<<',    hrefMatch: '/xz/activity_season' }] },
       { module: 'egg',        navSteps: [{ text: '>>小镇扭蛋活动<<',    hrefMatch: '/xz/activity_egg' }] },
       { module: 'energy',     navSteps: [{ text: '吃饭活动',            hrefMatch: '/xz/activity_energy' }] },
-      { module: 'restaurant', navSteps: [{ text: '餐厅',                hrefMatch: '/xz/restaurant' }] },
-      { module: 'mailbox',    navSteps: [{ text: '邮箱',                 hrefMatch: '/xz/mailbox' }] },
       { module: 'facility',   navSteps: [{ text: '设施',                hrefMatch: '/xz/restaurant_facility' }] },
       { module: 'bag',        navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' },
                                          { text: '礼包',                hrefMatch: '/xz/warehouse_2_0' }] },
@@ -3623,6 +3627,7 @@
                                          { text: '可升级',              hrefPattern: '^/xz/cookbook_\\d+_3_1$' }] },
       { module: 'guardian',   navSteps: [{ text: '神殿',                hrefMatch: '/xz/temple' },
                                          { text: '守护者',              hrefMatch: '/xz/guardian' }] },
+      { module: 'vitality',   navSteps: [{ text: '今日活跃',            hrefMatch: '/xz/restaurant_vitality' }] },
     ],
     stateKey: 'autopilot_state',
 

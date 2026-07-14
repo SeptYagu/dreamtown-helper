@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.48 metadata and shared panel version", "// @version      3.48" in text and "const SCRIPT_VERSION = '3.48';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.49 metadata and shared panel version", "// @version      3.49" in text and "const SCRIPT_VERSION = '3.49';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -235,6 +235,10 @@ restaurant_plan = text.index("{ module: 'restaurant', navSteps:")
 mailbox_plan = text.index("{ module: 'mailbox',    navSteps:")
 facility_plan = text.index("{ module: 'facility',   navSteps:")
 require("autopilot mailbox is immediately after restaurant", restaurant_plan < mailbox_plan < facility_plan and "text: '邮箱'" in text[mailbox_plan:facility_plan] and "hrefMatch: '/xz/mailbox'" in text[mailbox_plan:facility_plan])
+autopilot_plan = text[text.index("  const AutoPilot = {"):text.index("    stateKey: 'autopilot_state'")]
+autopilot_modules = re.findall(r"\{ module: '([^']+)'", autopilot_plan)
+require("autopilot moves restaurant to step 2 and mailbox to step 3", autopilot_modules[:4] == ['signIn', 'restaurant', 'mailbox', 'wish'])
+require("autopilot moves vitality claim to final step 20", len(autopilot_modules) == 20 and autopilot_modules[-1] == 'vitality')
 require("scheduler supports pattern navigation", "new RegExp(step.hrefPattern).test(href)" in text and "new RegExp(nav.hrefPattern).test(href)" in text)
 require("24h schedules have no cumulative jitter", "slot: '24h', jitterMin: 0, jitterMax: 0" in daily and "jitterMax: 60" not in daily)
 require("scheduler recomputes all tasks after return", "this.computeAll();\n        this.scheduleNext();" in text)
