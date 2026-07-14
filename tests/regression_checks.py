@@ -15,8 +15,9 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.18 metadata", "// @version      3.18" in text and "日常一体化 v3.18" in text)
+require("v3.19 metadata", "// @version      3.19" in text and "日常一体化 v3.19" in text)
 require("server time accepts current and legacy labels", "/(?:驯鹿|家园)报时[：:]/" in text)
+require("server clock advances from static page sample", "_serverClockCapturedAt" in text and "localNow - this._serverClockCapturedAt" in text)
 
 coupon_ids = re.search(r"PROP_IDS:\s*\[([^\]]+)\]", text)
 require("food coupon whitelist exists", coupon_ids is not None)
@@ -45,6 +46,12 @@ require("autopilot requires explicit completion", "if (completed === true)" in t
 require("router yields plan modules", "由 AutoPilot 独占，Router 不重复执行" in text)
 require("router does not mark action-in-progress complete", "仍有后续动作，不写完成标志" in text)
 require("autopilot food coupon route is real", "{ module: 'foodCoupon', navSteps: [{ text: '仓库'," in text)
+require("autopilot includes market purchase", "{ module: 'market',     navSteps: [{ text: '菜场'," in text)
+require("autopilot includes daily friend projects", "{ module: 'dailyFriend', navSteps: [{ text: '好友'," in text)
+require("autopilot includes daily bar projects", "{ module: 'dailyBar',   navSteps: [{ text: '广场'," in text)
+require("autopilot includes extra wish project", "{ module: 'extraWish',  navSteps: [{ text: '许愿'," in text)
+require("autopilot includes vitality claims", "{ module: 'vitality',   navSteps: [{ text: '今日活跃'," in text)
+require("autopilot preview uses live plan length", "自动驾驶流程（${AutoPilot.PLAN.length} 步）" in text)
 require("autopilot recipe route is dynamic", "{ text: '可升级'," in text and "hrefPattern: '^/xz/cookbook_\\\\d+_3_1$'" in text)
 require("autopilot is labelled one-shot", "🚀 立即跑一轮全套" in text and "🚀 自动跑全套日常" not in text)
 

@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.18
+// @name         梦想小镇日常一体化 v3.19
 // @namespace    http://tampermonkey.net/
-// @version      3.18
+// @version      3.19
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.19 变更（2026-07-14 自动驾驶与调度时钟修复）
+ * - 自动驾驶补齐每日好友、每日酒吧、额外许愿、今日活跃领奖和食材采购
+ * - 页面“家园报时”只作时钟校准，之后按实际经过时间推进，避免5分钟重试永久停在同一分钟
+ *
  * v3.18 变更（2026-07-14 项目次数保存）
  * - 次数输入同时监听 input/change，编辑后立即持久化，跨页不再恢复推荐值
  *
@@ -171,16 +175,31 @@
     gget(k, d) { try { const v = GM_getValue(NS + k, d); return v; } catch (e) { return d; } },
     gset(k, v) { try { GM_setValue(NS + k, v); } catch (e) {} },
 
+    _serverClockStamp: null,
+    _serverClockBaseMs: 0,
+    _serverClockCapturedAt: 0,
+
     getServerTime() {
+      const localNow = Date.now();
       try {
         const ps = Array.from(document.querySelectorAll('p'));
         const el = ps.find(p => /(?:驯鹿|家园)报时[：:]/.test(p.textContent));
         if (el) {
           const m = el.textContent.match(/(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
-          if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+          if (m) {
+            // 页面报时是服务器渲染时的静态文本，不能每次原样返回，否则页面停留期间时间永远不走。
+            // 仅在首次读取或页面给出新时间样本时重新校准，样本之间用本地经过时间推进。
+            const stamp = m[0];
+            if (this._serverClockStamp !== stamp || !this._serverClockBaseMs) {
+              this._serverClockStamp = stamp;
+              this._serverClockBaseMs = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+              this._serverClockCapturedAt = localNow;
+            }
+            return new Date(this._serverClockBaseMs + Math.max(0, localNow - this._serverClockCapturedAt));
+          }
         }
       } catch (e) {}
-      return new Date();
+      return new Date(localNow);
     },
 
     nextDaily(serverTime, hour = REFRESH_HOUR, min = REFRESH_MIN, rand = REFRESH_RAND) {
@@ -240,12 +259,12 @@
   };
 
   // ==================== 模块注册表 ====================
-  // 顺序：与 AutoPilot.PLAN 完全一致；非 PLAN 项放末尾
+  // 这里定义面板主开关；AutoPilot.PLAN 在后文另行定义完整执行顺序，并包含隐藏的每日项目模块。
   // schedule: daily(每日7:30±15min) | hourly(整点) | restaurant(17-45min随机) | guardian(24h硬定时)
   //  | recipe(24h硬定时) | meal(每日3期) | facility(智能:剩余+1h)
   // 默认开关：与日常强相关且安全的默认开，付费/风险操作默认关
   const MODULE_DEFS = [
-    // —— AutoPilot PLAN 顺序（13 项，含 foodCoupon/recipe）——
+    // —— 面板主模块 ——
     { id: 'signIn',     label: '1. 每日签到',     default: true,  schedule: 'daily' },
     { id: 'wish',       label: '2. 许愿树(免费)', default: true,  schedule: 'daily' },
     { id: 'god',        label: '3. 食神拜访',     default: true,  schedule: 'daily' },
@@ -263,7 +282,7 @@
     { id: 'dailyBar',    label: '每日酒吧项目', default: true, schedule: 'daily-project', hidden: true },
     { id: 'extraWish',   label: '额外许愿项目', default: true, schedule: 'daily-project', hidden: true },
     { id: 'vitality',    label: '今日活跃领奖', default: true, schedule: 'reward-twice' },
-    // —— 不在 PLAN 内，可单独运行 ——
+    // —— 付费模块：在 PLAN 内，但默认关闭 ——
     { id: 'market',     label: '食材采购(整点)', default: false, schedule: 'hourly' },  // 花钱
   ];
 
@@ -395,7 +414,7 @@
           <div class="row sub"><label>📖 自动学习新食谱</label><span class="toggle ${Utils.gget('recipe_learn', true) ? 'on' : 'off'}" data-sub="recipe_learn">${Utils.gget('recipe_learn', true) ? '开' : '关'}</span></div>
         </details>
         <details>
-          <summary>自动驾驶流程（13 步）</summary>
+          <summary>自动驾驶流程（${AutoPilot.PLAN.length} 步）</summary>
           <div id="dxzxx-plan-list" class="plan-list"></div>
         </details>
         <button class="run-btn" id="dxzxx-run">▶ 立即执行本页</button>
@@ -2655,9 +2674,15 @@
       { module: 'god',        navSteps: [{ text: '食神',                hrefMatch: '/xz/god' }] },
       { module: 'box',        navSteps: [{ text: '酒吧',                hrefMatch: '/xz/bar' },
                                          { text: '开宝箱',              hrefMatch: '/xz/box' }] },
+      { module: 'foodCoupon', navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' }] },
+      { module: 'market',     navSteps: [{ text: '菜场',                hrefMatch: '/xz/market' }] },
+      { module: 'dailyFriend', navSteps: [{ text: '好友',               hrefMatch: '/xz/friend' }] },
+      { module: 'dailyBar',   navSteps: [{ text: '广场',                hrefMatch: '/xz/square' },
+                                         { text: '酒吧',                hrefMatch: '/xz/bar' }] },
+      { module: 'extraWish',  navSteps: [{ text: '许愿',                hrefMatch: '/xz/wish' }] },
+      { module: 'vitality',   navSteps: [{ text: '今日活跃',            hrefMatch: '/xz/restaurant_vitality' }] },
       { module: 'season',     navSteps: [{ text: '>>夏日签到活动<<',    hrefMatch: '/xz/activity_season' }] },
       { module: 'egg',        navSteps: [{ text: '>>小镇扭蛋活动<<',    hrefMatch: '/xz/activity_egg' }] },
-      { module: 'foodCoupon', navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' }] },
       { module: 'energy',     navSteps: [{ text: '吃饭活动',            hrefMatch: '/xz/activity_energy' }] },
       { module: 'restaurant', navSteps: [{ text: '餐厅',                hrefMatch: '/xz/restaurant' }] },
       { module: 'facility',   navSteps: [{ text: '设施',                hrefMatch: '/xz/restaurant_facility' }] },
