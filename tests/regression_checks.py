@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.60 metadata and shared panel version", "// @version      3.60" in text and "const SCRIPT_VERSION = '3.60';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.61 metadata and shared panel version", "// @version      3.61" in text and "const SCRIPT_VERSION = '3.61';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -151,6 +151,7 @@ luck = text[luck_start:luck_end]
 require("daily luck is configurable and capped at three", "沾光（推荐3次）" in text and "id === 'luck' ? 3" in text and "p.id === 'luck' ? 3" in text)
 require("daily luck syncs exact server progress", "今日已沾光[：:\\s]*(\\d+)\\s*\\/\\s*3" in luck and "state.counts.luck = serverCount;" in luck)
 require("daily luck completes only on page-verified three of three", "if (serverCount >= 3)" in luck and "Utils.gset('luck_verified_day', gameDayKey());" in luck and "来访页已验证“今日已沾光：3 / 3次”" in luck and "if ((state.counts.luck || 0) >= 3) return true;" not in luck)
+require("daily luck refreshes stale back-cache before verification", "state.verifyFresh = succeeded;" in luck and "if (state.verifyFresh)" in luck and "state.verifyFresh = false;" in luck and "location.reload();" in luck and "刷新一次复核服务器N/3" in luck)
 require("daily luck single-run still honors configured count", "activeActionScope('dailyLuck') === 'project_luck'" in luck and "DailyProjectState.remaining('luck', state) <= 0" in luck and "全天完成仍以来访页3/3为准" in luck)
 require("daily luck follows only current deer or fool visits", "!/正在/.test(rowText)" in luck and "!/阿鹿|阿呆/.test(rowText)" in luck and "state.tried.includes(restaurantId)" in luck)
 require("daily luck clicks the real restaurant button", "addLuck(\"${restaurantId}\")" in luck and "a.textContent.trim() === '沾光'" in luck and "recordScopedProjectSuccess('luck');" in luck)
@@ -303,6 +304,7 @@ require("scheduler migration clears every stale plan", "Utils.gset(`sched_${id}_
 require("scheduler migration converts legacy local timestamps", "oldLastRun + serverOffset" in text and "ALL_ENTRIES().forEach" in text)
 require("scheduler migration resets meal window date", "sched_energy_lastWindow', null" in text and "sched_energy_lastResetDay', null" in text)
 require("v360 migrates fixed luck schedules", "v360_luck_schedule_migrated" in text and "['dailyLuck1031', 'dailyLuck1131', 'dailyLuckHourly']" in text)
+require("v361 immediately rechecks potentially missed three of three", "v361_luck_fresh_verify_migrated" in text and "sched_dailyLuckHourly_lastRun', 0" in text and "sched_dailyLuckHourly_nextAt', 0" in text)
 require("scheduler watchdog runs every minute", "setInterval(() => this.watchdogTick('60秒巡检'), 60000)" in text)
 require("scheduler watchdog wakes on browser resume", "window.addEventListener('focus'" in text and "document.visibilityState === 'visible'" in text and "window.addEventListener('pageshow'" in text)
 require("scheduler watchdog resumes active phase", "恢复 ${phase.id}/${phase.state}" in text and "await Router.run();" in text)

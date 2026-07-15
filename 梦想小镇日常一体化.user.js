@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.60
+// @name         梦想小镇日常一体化 v3.61
 // @namespace    http://tampermonkey.net/
-// @version      3.60
+// @version      3.61
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.61 变更（2026-07-15 沾光服务器进度强制复核）
+ * - 沾光成功返回来访页后强制刷新一次，避免浏览器后退缓存把点击前2/3误当成最新进度
+ * - 升级时立即复查当前小时，已达3/3会马上停排到次日10:31
+ *
  * v3.60 变更（2026-07-15 沾光动态整点调度）
  * - 沾光改为每日10:31-21:31逐小时检查，错过时只补当前小时，不再把多个旧时段挤到同一批餐厅
  * - 唯一完成标准改为来访页真实显示“今日已沾光：3 / 3次”；本地动作计数不再提前宣告完成
@@ -297,7 +301,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.60';
+  const SCRIPT_VERSION = '3.61';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -3007,11 +3011,20 @@
           Utils.warn(`每日沾光: 餐厅 ${restaurantId} 未检测到“沾光成功”，本次不计数且不重复点击`);
         }
         if (restaurantId && !state.tried.includes(restaurantId)) state.tried.push(restaurantId);
+        state.verifyFresh = succeeded;
         state.pending = null;
         DailyProjectState.save('luck', state);
       }
 
       if (location.pathname === '/xz/come_log') {
+        // history.back()可能恢复点击前的bfcache页面；成功动作后必须重新向服务器取一次N/3。
+        if (state.verifyFresh) {
+          state.verifyFresh = false;
+          DailyProjectState.save('luck', state);
+          Utils.log('每日沾光: 成功后返回页可能来自缓存，刷新一次复核服务器N/3');
+          location.reload();
+          return false;
+        }
         const serverProgress = text.match(/今日已沾光[：:\s]*(\d+)\s*\/\s*3/);
         if (serverProgress) {
           const serverCount = Math.min(3, Number(serverProgress[1]));
@@ -4386,6 +4399,12 @@
         Utils.gset(`sched_${id}_nextAt`, 0);
       }
       Utils.gset('v360_luck_schedule_migrated', true);
+    }
+    // v3.61：立即复查v3.60可能因后退缓存漏记的服务器3/3，不等待下一个小时。
+    if (!Utils.gget('v361_luck_fresh_verify_migrated', false)) {
+      Utils.gset('sched_dailyLuckHourly_lastRun', 0);
+      Utils.gset('sched_dailyLuckHourly_nextAt', 0);
+      Utils.gset('v361_luck_fresh_verify_migrated', true);
     }
     // 先填充全部nextRunAt，再创建/显示面板；否则调度列表晚到会推动右侧按钮位置。
     if (Scheduler.isOn()) {
