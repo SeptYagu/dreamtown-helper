@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.59
+// @name         梦想小镇日常一体化 v3.60
 // @namespace    http://tampermonkey.net/
-// @version      3.59
+// @version      3.60
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.60 变更（2026-07-15 沾光动态整点调度）
+ * - 沾光改为每日10:31-21:31逐小时检查，错过时只补当前小时，不再把多个旧时段挤到同一批餐厅
+ * - 唯一完成标准改为来访页真实显示“今日已沾光：3 / 3次”；本地动作计数不再提前宣告完成
+ *
  * v3.59 变更（2026-07-15 餐厅来访沾光）
  * - 新增“沾光（推荐3次）”，只跟随来访记录中当前正在做客的阿鹿/阿呆餐厅并点击真实沾光按钮
  * - 同步服务端“今日已沾光 N/3”，每个餐厅每日只尝试一次，明确成功后才计数
@@ -293,7 +297,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.59';
+  const SCRIPT_VERSION = '3.60';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -3005,18 +3009,26 @@
         if (restaurantId && !state.tried.includes(restaurantId)) state.tried.push(restaurantId);
         state.pending = null;
         DailyProjectState.save('luck', state);
-        // 服务端每日硬上限优先于面板单次目标；到 3 次就在当前页安全结束。
-        if ((state.counts.luck || 0) >= 3) return true;
       }
 
       if (location.pathname === '/xz/come_log') {
         const serverProgress = text.match(/今日已沾光[：:\s]*(\d+)\s*\/\s*3/);
         if (serverProgress) {
-          state.counts.luck = Math.max(state.counts.luck || 0, Math.min(3, Number(serverProgress[1])));
+          const serverCount = Math.min(3, Number(serverProgress[1]));
+          state.counts.luck = serverCount;
           DailyProjectState.save('luck', state);
+          if (serverCount >= 3) {
+            Utils.gset('luck_verified_day', gameDayKey());
+            Utils.log('每日沾光: 来访页已验证“今日已沾光：3 / 3次”，今日任务完成');
+            return true;
+          }
+          Utils.log(`每日沾光: 来访页服务器进度 ${serverCount}/3，继续检查当前来访餐厅`);
+        } else {
+          Utils.warn('每日沾光: 来访页未读取到“今日已沾光 N / 3次”，不得宣告今日完成');
         }
-        if ((state.counts.luck || 0) >= 3 || DailyProjectState.remaining('luck', state) <= 0) {
-          Utils.log(`每日沾光: 今日进度 ${state.counts.luck || 0}/3，本轮完成`);
+        // 面板独立运行仍忠实执行用户设置的本次数；这不等于把当天任务误报为3/3。
+        if (activeActionScope('dailyLuck') === 'project_luck' && DailyProjectState.remaining('luck', state) <= 0) {
+          Utils.log('每日沾光: 单项运行已达到本次设置次数，结束本次操作；全天完成仍以来访页3/3为准');
           return true;
         }
 
@@ -3234,10 +3246,6 @@
     { id: 'dailyBar', module: 'dailyBar', target: '/xz/bar', nav: '广场', route: [{ text: '广场', href: '/xz/square' }, { text: '酒吧', href: '/xz/bar' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 180000 },
     { id: 'extraWish', module: 'extraWish', target: '/xz/wish', nav: '许愿', slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 60000 },
 
-    // 阿鹿/阿呆每小时 10:30-21:30 随机来访；取最早两轮的 31 分优先沾光，服务端每天最多 3 次。
-    { id: 'dailyLuck1031', module: 'dailyLuck', target: '/xz/come_log', nav: '来访', slot: '10:31', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 60000 },
-    { id: 'dailyLuck1131', module: 'dailyLuck', target: '/xz/come_log', nav: '来访', slot: '11:31', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 60000 },
-
     // 早饭项目完成后领奖；晚饭后只复查领奖。临时活动入口消失时 optional 跳过。
     { id: 'vitalityMorning', module: 'vitality', target: '/xz/restaurant_vitality', nav: '今日活跃', slot: '8:30', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 10000 },
     { id: 'seasonMorning', module: 'season', target: '/xz/activity_season', nav: '>>夏日签到活动<<', slot: '8:30', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 10000, optional: true },
@@ -3265,6 +3273,49 @@
   //   computeNext(): 必填，返回下次触发的 ms 时间戳
 
   const DYNAMIC_SCHEDULE = [
+    // 餐厅来访沾光：10:31-21:31逐小时检查；只有来访页实际验证3/3才停到次日。
+    {
+      id: 'dailyLuckHourly', module: 'dailyLuck', target: '/xz/come_log', nav: '来访', runMs: 60000,
+      computeNext() {
+        const now = Utils.getServerTime();
+        const nowMs = now.getTime();
+        const todayKey = gameDayKey(now);
+        const nextDayStart = () => {
+          const next = new Date(now);
+          next.setDate(next.getDate() + 1);
+          next.setHours(10, 31, 0, 0);
+          return next.getTime();
+        };
+        if (Utils.gget('luck_verified_day', '') === todayKey) return nextDayStart();
+
+        const hour = now.getHours();
+        const minute = now.getMinutes();
+        if (hour < 10 || (hour === 10 && minute < 31)) {
+          const first = new Date(now);
+          first.setHours(10, 31, 0, 0);
+          return first.getTime();
+        }
+        if (hour > 21) return nextDayStart();
+
+        const lastRun = Utils.gget('sched_dailyLuckHourly_lastRun', 0);
+        const last = lastRun ? new Date(lastRun) : null;
+        const ranThisHour = !!last &&
+          last.getFullYear() === now.getFullYear() &&
+          last.getMonth() === now.getMonth() &&
+          last.getDate() === now.getDate() &&
+          last.getHours() === hour;
+        if (!ranThisHour) {
+          const currentSlot = new Date(now);
+          currentSlot.setMinutes(31, 0, 0);
+          return currentSlot.getTime() > nowMs ? currentSlot.getTime() : nowMs + 5000;
+        }
+        if (hour >= 21) return nextDayStart();
+        const nextHour = new Date(now);
+        nextHour.setHours(hour + 1, 31, 0, 0);
+        return nextHour.getTime();
+      },
+    },
+
     // 吃饭：3 期窗口（早 7-10、午 12-15、晚 18-21），每个窗口触发 1 次
     // sched_energy_lastWindow: 0=早餐已跑 / 1=午餐已跑 / 2=晚餐已跑 / null=今天未开始
     // sched_energy_lastResetDay: 上次重置的日期（YYYY-MM-DD），跨日时重置 lw
@@ -4328,6 +4379,13 @@
       Utils.gset('sched_facility_nextAt', 0);
       Utils.gset('facility_cycle_state', null);
       Utils.gset('v342_facility_schedule_migrated', true);
+    }
+    // v3.60：两条固定沾光计划会在迟安装时同小时连续补跑；改为单一逐小时动态计划。
+    if (!Utils.gget('v360_luck_schedule_migrated', false)) {
+      for (const id of ['dailyLuck1031', 'dailyLuck1131', 'dailyLuckHourly']) {
+        Utils.gset(`sched_${id}_nextAt`, 0);
+      }
+      Utils.gset('v360_luck_schedule_migrated', true);
     }
     // 先填充全部nextRunAt，再创建/显示面板；否则调度列表晚到会推动右侧按钮位置。
     if (Scheduler.isOn()) {
