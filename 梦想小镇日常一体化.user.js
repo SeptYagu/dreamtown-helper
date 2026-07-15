@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.52
+// @name         梦想小镇日常一体化 v3.53
 // @namespace    http://tampermonkey.net/
-// @version      3.52
+// @version      3.53
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,9 @@
 // ==/UserScript==
 
 /*
+ * v3.53 变更（2026-07-15 协会安妮拜访）
+ * - “拜访NPC”一轮新增协会安妮，经广场往返后继续酒吧雯姐
+ *
  * v3.52 变更（2026-07-15 广场阿鹿拜访）
  * - “拜访NPC”一轮新增广场阿鹿，四位NPC全部处理后才算完成
  *
@@ -267,7 +270,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.52';
+  const SCRIPT_VERSION = '3.53';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -435,7 +438,7 @@
     { id: 'npc', label: '拜访NPC（推荐1轮）', recommended: 1, module: 'dailyNpc' },
     { id: 'extraWish', label: '额外许愿果（常驻推荐0次）', recommended: 0, module: 'extraWish' },
   ];
-  // 从 v3.32 的“拜访雯姐”开关迁移；一轮现统一处理食神、菜园姐、阿鹿与雯姐。
+  // 从 v3.32 的“拜访雯姐”开关迁移；一轮现统一处理食神、菜园姐、阿鹿、安妮与雯姐。
   if (Utils.gget('project_npc_enabled', null) === null && Utils.gget('project_wenjie_enabled', null) !== null) {
     Utils.gset('project_npc_enabled', !!Utils.gget('project_wenjie_enabled', true));
   }
@@ -2723,9 +2726,9 @@
     },
   };
 
-  // 每日 NPC：一轮内依次处理食神、菜场菜园姐、广场阿鹿、酒吧雯姐；四位都完成才记1轮。
+  // 每日 NPC：一轮内依次处理食神、菜场菜园姐、广场阿鹿、协会安妮、酒吧雯姐；五位都完成才记1轮。
   MOD.dailyNpc = {
-    match: (p) => ['/xz/', '/xz/god', '/xz/market', '/xz/square', '/xz/bar'].includes(p),
+    match: (p) => ['/xz/', '/xz/god', '/xz/market', '/xz/square', '/xz/association', '/xz/bar'].includes(p),
     schedule: 'daily-project',
     requiresScheduled: true,
     async run() {
@@ -2738,10 +2741,10 @@
         }
       };
       const syncRound = () => {
-        const complete = ['god', 'garden', 'deer', 'wenjie'].every(id => state.visited.includes(id));
+        const complete = ['god', 'garden', 'deer', 'annie', 'wenjie'].every(id => state.visited.includes(id));
         // 修正旧版本只处理部分 NPC 后就把一次拜访误记成完成的状态。
         state.counts.npc = complete ? 1 : 0;
-        if (complete) Utils.log('每日NPC: 食神、菜园姐、阿鹿与雯姐均已处理，本轮完成 1/1');
+        if (complete) Utils.log('每日NPC: 食神、菜园姐、阿鹿、安妮与雯姐均已处理，本轮完成 1/1');
         return complete;
       };
 
@@ -2798,7 +2801,13 @@
       if (location.pathname === '/xz/square') {
         if (await visitHere('deer', '阿鹿')) return false;
         if (DailyProjectState.remaining('npc', state) <= 0) return true;
+        if (!state.visited.includes('annie')) return (await go('/xz/association')) ? false : true;
         return (await go('/xz/bar')) ? false : true;
+      }
+      if (location.pathname === '/xz/association') {
+        if (await visitHere('annie', '安妮')) return false;
+        if (DailyProjectState.remaining('npc', state) <= 0) return true;
+        return (await go('/xz/square')) ? false : true;
       }
       if (location.pathname === '/xz/bar') {
         if (await visitHere('wenjie', '雯姐')) return false;

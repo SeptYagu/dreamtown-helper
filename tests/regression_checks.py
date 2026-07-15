@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.52 metadata and shared panel version", "// @version      3.52" in text and "const SCRIPT_VERSION = '3.52';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.53 metadata and shared panel version", "// @version      3.53" in text and "const SCRIPT_VERSION = '3.53';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -124,8 +124,9 @@ require("daily project counts persist on input and change", "addEventListener('i
 require("daily projects use 6am game day", "date.getTime() - 6 * 3600000" in text)
 require("daily friend actions are configurable", "['like', 'dig', 'roach'].some" in text and "DailyProjectState.remaining(type, state)" in text)
 require("daily bar actions are configurable", "DailyProjectState.remaining('fist'" in text and "DailyProjectState.remaining('cup'" in text and "DailyProjectState.remaining('number'" in text)
-require("daily NPC project is one complete round", "拜访NPC（推荐1轮）" in text and "['god', 'garden', 'deer', 'wenjie'].every" in text and "本轮完成 1/1" in text)
-require("daily NPC round includes all four visits", "visitHere('god', '食神')" in text and "visitHere('garden', '菜园姐')" in text and "visitHere('deer', '阿鹿')" in text and "visitHere('wenjie', '雯姐')" in text)
+require("daily NPC project is one complete round", "拜访NPC（推荐1轮）" in text and "['god', 'garden', 'deer', 'annie', 'wenjie'].every" in text and "本轮完成 1/1" in text)
+require("daily NPC round includes all five visits", "visitHere('god', '食神')" in text and "visitHere('garden', '菜园姐')" in text and "visitHere('deer', '阿鹿')" in text and "visitHere('annie', '安妮')" in text and "visitHere('wenjie', '雯姐')" in text)
+require("daily NPC association route returns through square", "go('/xz/association')" in text and "location.pathname === '/xz/association'" in text and "go('/xz/square')" in text and "!state.visited.includes('annie')" in text)
 require("food god has no standalone module or schedule", "MOD.god =" not in text and "id: 'god',     module: 'god'" not in daily)
 require("single NPC run starts from food god", "project_npc: { module: 'dailyNpc', navSteps: [{ text: '食神', hrefMatch: '/xz/god' }] }" in text)
 require("daily NPC migrates v3.33 partial count", "v334_npc_round_migrated" in text and "state.counts.npc = complete ? 1 : 0;" in text)
