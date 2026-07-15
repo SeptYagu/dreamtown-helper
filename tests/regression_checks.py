@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.57 metadata and shared panel version", "// @version      3.57" in text and "const SCRIPT_VERSION = '3.57';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.58 metadata and shared panel version", "// @version      3.58" in text and "const SCRIPT_VERSION = '3.58';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -42,6 +42,7 @@ require("zero-count project action does not stop scheduler or navigate", "projec
 require("project action start clears stale pending without clearing daily counts", "repeatableProjectStateKeys" in text and "projectState.pending = null;" in text and "projectState.counts[projectId] = 0" not in text)
 require("server once-only projects keep all-day completion semantics", "if (['npc', 'number'].includes(id)) return Math.max(0, target - (state.counts[id] || 0));" in text and "fist: 'bar', cup: 'bar', number: 'bar'" not in text)
 require("extra wish records a scoped success after confirmed refresh", "recordScopedProjectSuccess('extraWish');" in text and text.index("state.counts.extraWish =") < text.index("recordScopedProjectSuccess('extraWish');"))
+require("extra wish stock is scoped to the real button sibling", "btn?.nextElementSibling?.textContent" in text and "stockText.match(/拥有\\s*(\\d+)\\s*个/)" in text and "/许愿果[^\\d]*0/.test(text)" not in text)
 require("project action session is cleared on stop and stale initialization", text.count("Utils.gset(PROJECT_ACTION_RUN_KEY, null);") >= 4 and "if (!AutoPilot.isOn()) Utils.gset(PROJECT_ACTION_RUN_KEY, null);" in text)
 require("panel scheduler information uses freed space", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
 require("panel falls back to one column on narrow screens", "@media (max-width:620px)" in text and "grid-template-columns:1fr" in text)

@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.57
+// @name         梦想小镇日常一体化 v3.58
 // @namespace    http://tampermonkey.net/
-// @version      3.57
+// @version      3.58
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,9 @@
 // ==/UserScript==
 
 /*
+ * v3.58 变更（2026-07-15 许愿果库存作用域修复）
+ * - 额外许愿只解析真实按钮旁“拥有N个”，不再让面板“推荐0次”污染库存判断
+ *
  * v3.57 变更（2026-07-15 每日细项跨页会话修复）
  * - 每日项目单项运行使用独立持久会话保存目标与本次成功数，跨页不再退回全天计数判定
  * - AutoPilot结束、总停止或异常残留时同步清理细项会话，避免影响正常每日调度
@@ -285,7 +288,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.57';
+  const SCRIPT_VERSION = '3.58';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -2987,10 +2990,14 @@
       }
       if (DailyProjectState.remaining('extraWish', state) <= 0) return true;
       const btn = document.querySelector('a[onclick="makeWish(1)"]');
-      if (!btn || /许愿果[^\d]*0/.test(text)) {
-        Utils.warn('额外许愿: 无按钮或许愿果不足');
+      const stockText = btn?.nextElementSibling?.textContent?.trim() || '';
+      const stockMatch = stockText.match(/拥有\s*(\d+)\s*个/);
+      const stock = stockMatch ? Number(stockMatch[1]) : null;
+      if (!btn || stock === null || stock <= 0) {
+        Utils.warn(`额外许愿: 无按钮、库存无法识别或许愿果不足（${stockText || '无库存文本'}）`);
         return true;
       }
+      Utils.log(`额外许愿: 当前许愿果 ${stock} 个，执行本次下一次`);
       state.pending = true;
       DailyProjectState.save('wish', state);
       await Utils.sleep(Utils.randMs(1, 2));
