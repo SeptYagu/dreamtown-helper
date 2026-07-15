@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.58
+// @name         梦想小镇日常一体化 v3.59
 // @namespace    http://tampermonkey.net/
-// @version      3.58
+// @version      3.59
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.59 变更（2026-07-15 餐厅来访沾光）
+ * - 新增“沾光（推荐3次）”，只跟随来访记录中当前正在做客的阿鹿/阿呆餐厅并点击真实沾光按钮
+ * - 同步服务端“今日已沾光 N/3”，每个餐厅每日只尝试一次，明确成功后才计数
+ * - 长期调度器固定在 10:31、11:31 检查两轮，优先覆盖最早两批小时来访
+ *
  * v3.58 变更（2026-07-15 许愿果库存作用域修复）
  * - 额外许愿只解析真实按钮旁“拥有N个”，不再让面板“推荐0次”污染库存判断
  *
@@ -288,7 +293,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.58';
+  const SCRIPT_VERSION = '3.59';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -423,6 +428,7 @@
     { id: 'dailyFriend', label: '每日好友项目', default: true, schedule: 'daily-project', hidden: true },
     { id: 'dailyBar',    label: '每日酒吧项目', default: true, schedule: 'daily-project', hidden: true },
     { id: 'dailyNpc',    label: '每日NPC拜访', default: true, schedule: 'daily-project', hidden: true },
+    { id: 'dailyLuck',   label: '每日餐厅沾光', default: true, schedule: 'daily-project', hidden: true },
     { id: 'extraWish',   label: '额外许愿项目', default: true, schedule: 'daily-project', hidden: true },
     { id: 'vitality',    label: '今日活跃领奖', default: true, schedule: 'reward-twice' },
     // —— 付费模块：在 PLAN 内，但默认关闭 ——
@@ -435,7 +441,7 @@
   });
 
   const isEnabled = (id) => {
-    if (['dailyFriend', 'dailyBar', 'dailyNpc', 'extraWish'].includes(id)) {
+    if (['dailyFriend', 'dailyBar', 'dailyNpc', 'dailyLuck', 'extraWish'].includes(id)) {
       return DAILY_PROJECT_DEFS.some(p => p.module === id && projectEnabled(p.id) && projectTarget(p.id) > 0);
     }
     if (id === 'mailbox') {
@@ -454,6 +460,7 @@
     { id: 'cup', label: '猜酒杯（与猜拳合计推荐20次）', recommended: 10, module: 'dailyBar' },
     { id: 'number', label: '猜数字（推荐1次）', recommended: 1, module: 'dailyBar' },
     { id: 'npc', label: '拜访NPC（推荐1轮）', recommended: 1, module: 'dailyNpc' },
+    { id: 'luck', label: '沾光（推荐3次）', recommended: 3, module: 'dailyLuck' },
     { id: 'extraWish', label: '额外许愿果（常驻推荐0次）', recommended: 0, module: 'extraWish' },
   ];
   // 从 v3.32 的“拜访雯姐”开关迁移；一轮现统一处理食神、菜园姐、阿鹿、安妮与雯姐。
@@ -475,7 +482,7 @@
   });
   const projectEnabled = (id) => !!Utils.gget(`project_${id}_enabled`, false);
   const projectTarget = (id) => {
-    const cap = id === 'npc' ? 1 : 500;  // 两位NPC都是服务端每日一次，一天最多执行一轮。
+    const cap = id === 'npc' ? 1 : id === 'luck' ? 3 : 500;
     return Math.max(0, Math.min(cap, parseInt(Utils.gget(`project_${id}_count`, 0), 10) || 0));
   };
   const gameDayKey = (date = Utils.getServerTime()) => {
@@ -496,6 +503,7 @@
     project_cup: { module: 'dailyBar', navSteps: [{ text: '广场', hrefMatch: '/xz/square' }, { text: '酒吧', hrefMatch: '/xz/bar' }] },
     project_number: { module: 'dailyBar', navSteps: [{ text: '广场', hrefMatch: '/xz/square' }, { text: '酒吧', hrefMatch: '/xz/bar' }] },
     project_npc: { module: 'dailyNpc', navSteps: [{ text: '食神', hrefMatch: '/xz/god' }] },
+    project_luck: { module: 'dailyLuck', navSteps: [{ text: '来访', hrefMatch: '/xz/come_log' }] },
     project_extraWish: { module: 'extraWish', navSteps: [{ text: '许愿', hrefMatch: '/xz/wish' }] },
   };
   const activeActionScope = (moduleId = null) => {
@@ -657,7 +665,7 @@
       const planReferenceLabels = {
         mailbox: '餐厅后系统邮箱',
       };
-      const dailyProjectModules = ['dailyNpc', 'dailyFriend', 'dailyBar', 'extraWish'];
+      const dailyProjectModules = ['dailyNpc', 'dailyFriend', 'dailyBar', 'dailyLuck', 'extraWish'];
       let displayStep = 0;
       AutoPilot.PLAN.forEach((step, index) => {
         const m = MODULE_DEFS.find(def => def.id === step.module);
@@ -696,7 +704,7 @@
         const enabled = projectEnabled(p.id);
         const row = document.createElement('div');
         row.className = 'row project-row';
-        row.innerHTML = `<label>${p.label}</label><input class="project-count" type="number" min="0" max="${p.id === 'npc' ? 1 : 500}" value="${projectTarget(p.id)}" data-project-count="${p.id}"><button class="action-run" data-run-action="project_${p.id}">运行</button><span class="toggle ${enabled ? 'on' : 'off'}" data-project="${p.id}">${enabled ? '开' : '关'}</span>`;
+        row.innerHTML = `<label>${p.label}</label><input class="project-count" type="number" min="0" max="${p.id === 'npc' ? 1 : p.id === 'luck' ? 3 : 500}" value="${projectTarget(p.id)}" data-project-count="${p.id}"><button class="action-run" data-run-action="project_${p.id}">运行</button><span class="toggle ${enabled ? 'on' : 'off'}" data-project="${p.id}">${enabled ? '开' : '关'}</span>`;
         projectRows.appendChild(row);
       });
 
@@ -2973,6 +2981,93 @@
     },
   };
 
+  // 餐厅来访沾光：只处理当前“正在做客”的阿鹿/阿呆记录；历史记录绝不回扫。
+  MOD.dailyLuck = {
+    match: (p) => p === '/xz/come_log' || /^\/xz\/restaurant_\d+_1$/.test(p),
+    schedule: 'daily-project',
+    requiresScheduled: true,
+    async run() {
+      const state = DailyProjectState.load('luck');
+      const text = document.body.textContent || '';
+      const restaurantMatch = location.pathname.match(/^\/xz\/restaurant_(\d+)_1$/);
+
+      // 点击沾光会刷新当前餐厅页；先读取明确结果，再决定是否计数。
+      if (state.pending) {
+        const restaurantId = String(state.pending.restaurantId || '');
+        const succeeded = /沾光成功/.test(text);
+        if (succeeded) {
+          state.counts.luck = Math.min(3, (state.counts.luck || 0) + 1);
+          recordScopedProjectSuccess('luck');
+          Utils.log(`每日沾光: 餐厅 ${restaurantId} 成功，今日 ${state.counts.luck}/3`);
+        } else {
+          Utils.warn(`每日沾光: 餐厅 ${restaurantId} 未检测到“沾光成功”，本次不计数且不重复点击`);
+        }
+        if (restaurantId && !state.tried.includes(restaurantId)) state.tried.push(restaurantId);
+        state.pending = null;
+        DailyProjectState.save('luck', state);
+        // 服务端每日硬上限优先于面板单次目标；到 3 次就在当前页安全结束。
+        if ((state.counts.luck || 0) >= 3) return true;
+      }
+
+      if (location.pathname === '/xz/come_log') {
+        const serverProgress = text.match(/今日已沾光[：:\s]*(\d+)\s*\/\s*3/);
+        if (serverProgress) {
+          state.counts.luck = Math.max(state.counts.luck || 0, Math.min(3, Number(serverProgress[1])));
+          DailyProjectState.save('luck', state);
+        }
+        if ((state.counts.luck || 0) >= 3 || DailyProjectState.remaining('luck', state) <= 0) {
+          Utils.log(`每日沾光: 今日进度 ${state.counts.luck || 0}/3，本轮完成`);
+          return true;
+        }
+
+        const candidates = [];
+        const seen = new Set();
+        for (const link of document.querySelectorAll('a[href^="/xz/restaurant_"]')) {
+          const href = link.getAttribute('href') || '';
+          const match = href.match(/^\/xz\/restaurant_(\d+)_1$/);
+          const rowText = link.parentElement?.textContent || '';
+          if (!match || !/正在/.test(rowText) || !/阿鹿|阿呆/.test(rowText)) continue;
+          const restaurantId = match[1];
+          if (seen.has(restaurantId) || state.tried.includes(restaurantId)) continue;
+          seen.add(restaurantId);
+          candidates.push({ link, restaurantId });
+        }
+        if (!candidates.length) {
+          Utils.log('每日沾光: 当前来访记录没有尚未尝试的阿鹿/阿呆餐厅，本轮检查结束');
+          return true;
+        }
+        Utils.log(`每日沾光: 进入当前来访餐厅 ${candidates[0].restaurantId}`);
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(candidates[0].link);
+        return false;
+      }
+
+      if (restaurantMatch) {
+        const restaurantId = restaurantMatch[1];
+        const button = Array.from(document.querySelectorAll('a[onclick]')).find(a =>
+          (a.getAttribute('onclick') || '') === `addLuck("${restaurantId}")` && a.textContent.trim() === '沾光');
+        if (button && !state.tried.includes(restaurantId)) {
+          state.pending = { restaurantId };
+          DailyProjectState.save('luck', state);
+          Utils.log(`每日沾光: 点击餐厅 ${restaurantId} 的真实“沾光”按钮`);
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(button);
+          return false;
+        }
+        if (!state.tried.includes(restaurantId)) state.tried.push(restaurantId);
+        DailyProjectState.save('luck', state);
+        Utils.warn(`每日沾光: 餐厅 ${restaurantId} 没有可用沾光按钮，返回来访记录`);
+        const logLink = Array.from(document.querySelectorAll('a[href]')).find(a => (a.getAttribute('href') || '') === '/xz/come_log');
+        await Utils.sleep(Utils.randMs(1, 2));
+        if (logLink) Utils.click(logLink);
+        else window.history.back();
+        return false;
+      }
+
+      return false;
+    },
+  };
+
   MOD.extraWish = {
     match: (p) => p === '/xz/wish',
     schedule: 'daily-project',
@@ -3138,6 +3233,10 @@
     { id: 'dailyNpc', module: 'dailyNpc', target: '/xz/god', nav: '食神', route: [{ text: '食神', href: '/xz/god' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 45000 },
     { id: 'dailyBar', module: 'dailyBar', target: '/xz/bar', nav: '广场', route: [{ text: '广场', href: '/xz/square' }, { text: '酒吧', href: '/xz/bar' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 180000 },
     { id: 'extraWish', module: 'extraWish', target: '/xz/wish', nav: '许愿', slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 60000 },
+
+    // 阿鹿/阿呆每小时 10:30-21:30 随机来访；取最早两轮的 31 分优先沾光，服务端每天最多 3 次。
+    { id: 'dailyLuck1031', module: 'dailyLuck', target: '/xz/come_log', nav: '来访', slot: '10:31', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 60000 },
+    { id: 'dailyLuck1131', module: 'dailyLuck', target: '/xz/come_log', nav: '来访', slot: '11:31', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 60000 },
 
     // 早饭项目完成后领奖；晚饭后只复查领奖。临时活动入口消失时 optional 跳过。
     { id: 'vitalityMorning', module: 'vitality', target: '/xz/restaurant_vitality', nav: '今日活跃', slot: '8:30', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 10000 },
@@ -3808,6 +3907,7 @@
       { module: 'dailyFriend', navSteps: [{ text: '好友',               hrefMatch: '/xz/friend' }] },
       { module: 'dailyBar',   navSteps: [{ text: '广场',                hrefMatch: '/xz/square' },
                                          { text: '酒吧',                hrefMatch: '/xz/bar' }] },
+      { module: 'dailyLuck',  navSteps: [{ text: '来访',                hrefMatch: '/xz/come_log' }] },
       { module: 'extraWish',  navSteps: [{ text: '许愿',                hrefMatch: '/xz/wish' }] },
       { module: 'energy',     navSteps: [{ text: '吃饭活动',            hrefMatch: '/xz/activity_energy' }] },
       { module: 'foodCompound', navSteps: [{ text: '橱柜',              hrefMatch: '/xz/cupboard' }] },
@@ -3900,6 +4000,7 @@
       const repeatableProjectStateKeys = {
         like: 'friend', dig: 'friend', roach: 'friend',
         fist: 'bar', cup: 'bar',
+        luck: 'luck',
         extraWish: 'wish',
       };
       const projectStateKey = projectId ? repeatableProjectStateKeys[projectId] : null;
