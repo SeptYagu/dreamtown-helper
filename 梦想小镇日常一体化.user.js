@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.61
+// @name         梦想小镇日常一体化 v3.62
 // @namespace    http://tampermonkey.net/
-// @version      3.61
+// @version      3.62
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.62 变更（2026-07-15 自动驾驶合并运行）
+ * - 面板把餐厅管理与餐厅后系统邮箱合并为一步，合并运行会依次执行两者
+ * - 每日项目合并行恢复“运行”按钮，一键执行上方当前开启且次数大于0的所有项目
+ *
  * v3.61 变更（2026-07-15 沾光服务器进度强制复核）
  * - 沾光成功返回来访页后强制刷新一次，避免浏览器后退缓存把点击前2/3误当成最新进度
  * - 升级时立即复查当前小时，已达3/3会马上停排到次日10:31
@@ -301,7 +305,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.61';
+  const SCRIPT_VERSION = '3.62';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -514,6 +518,10 @@
     project_luck: { module: 'dailyLuck', navSteps: [{ text: '来访', hrefMatch: '/xz/come_log' }] },
     project_extraWish: { module: 'extraWish', navSteps: [{ text: '许愿', hrefMatch: '/xz/wish' }] },
   };
+  const GROUP_RUN_DEFS = {
+    restaurantAndMailbox: { label: '餐厅管理与系统邮箱', modules: ['restaurant', 'mailbox'] },
+    dailyProjects: { label: '每日项目', modules: ['dailyNpc', 'dailyFriend', 'dailyBar', 'dailyLuck', 'extraWish'] },
+  };
   const activeActionScope = (moduleId = null) => {
     const state = Utils.gget('autopilot_state', null);
     if (!state?.enabled || !state.actionScope) return null;
@@ -596,7 +604,8 @@
         #dxzxx-panel .panel-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 6px;}
         #dxzxx-stop{grid-column:1/-1;}
         #dxzxx-panel .action-run{width:auto;padding:1px 5px;margin:0;background:#4CAF50;color:#fff;font-size:11px;font-weight:normal;flex:0 0 auto;}
-        #dxzxx-panel .single-run{width:auto;padding:1px 7px;margin:0;background:#4CAF50;color:#fff;font-size:11px;font-weight:normal;flex:0 0 auto;}
+        #dxzxx-panel .single-run,#dxzxx-panel .group-run{width:auto;padding:1px 7px;margin:0;background:#4CAF50;color:#fff;font-size:11px;font-weight:normal;flex:0 0 auto;}
+        #dxzxx-panel .panel-icon{width:14px;height:14px;object-fit:contain;vertical-align:-3px;margin-right:3px;}
         #dxzxx-panel .plan-ref{font-size:10px;color:#888;white-space:nowrap;flex:0 0 auto;}
         #dxzxx-panel .plan-reference{background:rgba(255,255,255,.035);border-radius:3px;}
         #dxzxx-panel #dxzxx-rows .row.current{background:#FFE082;border-radius:3px;font-weight:bold;}
@@ -616,7 +625,7 @@
           <div class="panel-column">
             <details open>
               <summary>餐厅子开关</summary>
-              <div class="row sub"><label>🪳 自动打蟑螂</label><button class="action-run" data-run-action="restaurant_cockroach">运行</button><span class="toggle ${Utils.gget('restaurant_cockroach', true) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', true) ? '开' : '关'}</span></div>
+              <div class="row sub"><label><img class="panel-icon" src="/readImg/xz_cockroach" alt="蟑螂">自动打蟑螂</label><button class="action-run" data-run-action="restaurant_cockroach">运行</button><span class="toggle ${Utils.gget('restaurant_cockroach', true) ? 'on' : 'off'}" data-sub="restaurant_cockroach">${Utils.gget('restaurant_cockroach', true) ? '开' : '关'}</span></div>
               <div class="row sub"><label>⛽ 自动添油</label><button class="action-run" data-run-action="restaurant_oil">运行</button><span class="toggle ${Utils.gget('restaurant_oil', true) ? 'on' : 'off'}" data-sub="restaurant_oil">${Utils.gget('restaurant_oil', true) ? '开' : '关'}</span></div>
               <div class="row sub"><label>📬 餐厅后领取系统邮件</label><button class="action-run" data-run-action="restaurant_mailbox">运行</button><span class="toggle ${Utils.gget('restaurant_mailbox', true) ? 'on' : 'off'}" data-sub="restaurant_mailbox">${Utils.gget('restaurant_mailbox', true) ? '开' : '关'}</span></div>
             </details>
@@ -670,20 +679,28 @@
       document.body.appendChild(panel);
 
       const rows = panel.querySelector('#dxzxx-rows');
-      const planReferenceLabels = {
-        mailbox: '餐厅后系统邮箱',
-      };
-      const dailyProjectModules = ['dailyNpc', 'dailyFriend', 'dailyBar', 'dailyLuck', 'extraWish'];
+      const dailyProjectModules = GROUP_RUN_DEFS.dailyProjects.modules;
       let displayStep = 0;
       AutoPilot.PLAN.forEach((step, index) => {
         const m = MODULE_DEFS.find(def => def.id === step.module);
+        if (step.module === 'mailbox') return;
+        if (step.module === 'restaurant') {
+          displayStep++;
+          const row = document.createElement('div');
+          const enabled = isEnabled('restaurant');
+          row.className = 'row';
+          row.dataset.modules = GROUP_RUN_DEFS.restaurantAndMailbox.modules.join(',');
+          row.innerHTML = `<label>${displayStep}. 餐厅管理 <span class="plan-ref">（含系统邮箱，见左上子开关）</span></label><button class="group-run" data-run-group="restaurantAndMailbox">运行</button><span class="toggle ${enabled ? 'on' : 'off'}" data-id="restaurant">${enabled ? '开' : '关'}</span>`;
+          rows.appendChild(row);
+          return;
+        }
         if (dailyProjectModules.includes(step.module)) {
           if (step.module !== dailyProjectModules[0]) return;
           displayStep++;
           const row = document.createElement('div');
           row.className = 'row plan-reference';
           row.dataset.modules = dailyProjectModules.join(',');
-          row.innerHTML = `<label>${displayStep}. 每日项目</label><span class="plan-ref">见上方每日项目配置</span>`;
+          row.innerHTML = `<label>${displayStep}. 每日项目</label><button class="group-run" data-run-group="dailyProjects">运行</button><span class="plan-ref">见上方每日项目配置</span>`;
           rows.appendChild(row);
           return;
         }
@@ -692,8 +709,8 @@
           const row = document.createElement('div');
           row.className = 'row plan-reference';
           row.dataset.module = step.module;
-          const label = planReferenceLabels[step.module] || m?.label || step.module;
-          const reference = step.module === 'mailbox' ? '见左上餐厅子开关' : '见上方配置';
+          const label = m?.label || step.module;
+          const reference = '见上方配置';
           row.innerHTML = `<label>${displayStep}. ${label}</label><span class="plan-ref">${reference}</span>`;
           rows.appendChild(row);
           return;
@@ -772,6 +789,12 @@
       panel.querySelectorAll('[data-run-module]').forEach(button => {
         button.addEventListener('click', () => {
           AutoPilot.startSingle(button.dataset.runModule);
+          Panel.refreshAutopilotUI();
+        });
+      });
+      panel.querySelectorAll('[data-run-group]').forEach(button => {
+        button.addEventListener('click', () => {
+          AutoPilot.startGroup(button.dataset.runGroup);
           Panel.refreshAutopilotUI();
         });
       });
@@ -4038,6 +4061,48 @@
       return true;
     },
 
+    startGroup(groupId) {
+      const def = GROUP_RUN_DEFS[groupId];
+      if (!def) {
+        Utils.warn(`合并运行: 未找到分组 ${groupId}`);
+        return false;
+      }
+      if (this.isOn()) {
+        Utils.warn('合并运行: 已有任务正在执行，请先停止');
+        Utils.showStatus('合并运行', '已有任务正在执行', '#f44');
+        return false;
+      }
+      const indices = def.modules.map(moduleId => this.PLAN.findIndex(step => step.module === moduleId));
+      if (indices.some(index => index < 0) || indices.some((index, i) => i > 0 && index !== indices[i - 1] + 1)) {
+        Utils.warn(`合并运行: ${groupId} 的模块不存在或不连续`);
+        return false;
+      }
+      if (!def.modules.some(moduleId => isEnabled(moduleId))) {
+        Utils.log(`合并运行: ${def.label} 没有已开启项目，本次不执行`);
+        Utils.showStatus('合并运行', `${def.label} 无已开启项目`, '#888');
+        return true;
+      }
+      const schedulerWasOn = typeof Scheduler !== 'undefined' && Scheduler.isOn();
+      if (schedulerWasOn) Scheduler.stop(`合并运行 ${def.label}`);
+      Utils.gset('operation_stopped', false);
+      Utils.gset('autopilot_emergency_stop', false);
+      Utils.gset('restaurant_roach_attempts', 0);
+      if (def.modules.includes('restaurant')) Utils.gset('restaurant_roach_cycle_blocked', false);
+      Utils.gset('autopilot_session', { id: Date.now(), iter: 0 });
+      Utils.gset(this.stateKey, {
+        enabled: true,
+        stepIndex: indices[0],
+        startedAt: Date.now(),
+        singleGroup: groupId,
+        singleEndStepIndex: indices[indices.length - 1],
+        resumeSchedulerAfterSingle: schedulerWasOn,
+      });
+      Utils.log(`▶ 合并运行启动: ${def.label}`);
+      Utils.showStatus('合并运行', def.label, '#4CAF50');
+      setTimeout(() => this.continue(), 300);
+      return true;
+    },
+
     startAction(actionId) {
       const def = ACTION_RUN_DEFS[actionId];
       if (!def) {
@@ -4123,8 +4188,9 @@
 
     stop(reason = '', { resumeScheduler = null } = {}) {
       const previousState = Utils.gget(this.stateKey, {});
+      const scopedRun = !!(previousState.singleModule || previousState.singleGroup);
       const shouldResumeScheduler = resumeScheduler === null
-        ? (previousState.singleModule ? !!previousState.resumeSchedulerAfterSingle : true)
+        ? (scopedRun ? !!previousState.resumeSchedulerAfterSingle : true)
         : resumeScheduler;
       Utils.gset(this.stateKey, { enabled: false });
       Utils.gset(PROJECT_ACTION_RUN_KEY, null);
@@ -4132,7 +4198,7 @@
       Utils.log(`⏹ 自动计划停止${reason ? ': ' + reason : ''}`);
       Utils.showStatus('自动驾驶', '已停止', '#f44');
       if (shouldResumeScheduler && typeof Scheduler !== 'undefined' && !Scheduler.isOn()) {
-        Utils.log(previousState.singleModule ? '单项运行: 已恢复原调度器状态' : '自动驾驶: 已交接长期循环调度器');
+        Utils.log(scopedRun ? '单项/合并运行: 已恢复原调度器状态' : '自动驾驶: 已交接长期循环调度器');
         Scheduler.start();
       }
     },
@@ -4279,6 +4345,13 @@
         Utils.log(`✓ 单项运行完成: ${label}`);
         Utils.showStatus(state.actionScope ? '细项运行' : '单项运行', `${label} 完成 ✓`, '#4CAF50');
         this.stop(`${label} 单项完成`);
+        return;
+      }
+      if (state.singleGroup && (state.stepIndex || 0) >= state.singleEndStepIndex) {
+        const label = GROUP_RUN_DEFS[state.singleGroup]?.label || state.singleGroup;
+        Utils.log(`✓ 合并运行完成: ${label}`);
+        Utils.showStatus('合并运行', `${label} 完成 ✓`, '#4CAF50');
+        this.stop(`${label} 合并完成`);
         return;
       }
       state.stepIndex = (state.stepIndex || 0) + 1;
