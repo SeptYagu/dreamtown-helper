@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.54
+// @name         梦想小镇日常一体化 v3.55
 // @namespace    http://tampermonkey.net/
-// @version      3.54
+// @version      3.55
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.55 变更（2026-07-15 每日项目独立运行基准修复）
+ * - 可重复每日项目的独立运行按本次启动基准计数，今日已经达标后仍能再次执行
+ * - 额外许愿果配置为0时点击“运行”仍明确执行1次，不清空长期调度的每日累计
+ *
  * v3.54 变更（2026-07-15 NPC跨区域真实路由修复）
  * - NPC路线按visited从首页选择下一站，食神/菜场后先回首页，找不到链接不再误报完成
  *
@@ -273,7 +277,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.54';
+  const SCRIPT_VERSION = '3.55';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -2612,12 +2616,19 @@
     },
     save(key, state) { Utils.gset(`project_state_${key}`, state); },
     remaining(id, state) {
-      const scope = activeActionScope();
+      const actionState = Utils.gget('autopilot_state', null);
+      const scope = actionState?.enabled ? actionState.actionScope : null;
       const scopedProject = scope?.startsWith('project_') ? scope.slice('project_'.length) : null;
       if (scopedProject) {
         if (scopedProject !== id) return 0;
-        // 独立运行绕过项目开关；配置为0时仍明确执行1次。
-        return Math.max(0, Math.max(1, projectTarget(id)) - (state.counts[id] || 0));
+        // 可重复项目的独立运行按“本次新增”计数，不受今天此前累计影响；NPC为服务端每日一次，保留全天语义。
+        const target = Math.max(1, projectTarget(id));
+        if (id === 'npc') return Math.max(0, target - (state.counts[id] || 0));
+        const baseline = actionState.actionBaseline?.projectId === id
+          ? Math.max(0, Number(actionState.actionBaseline.count) || 0)
+          : 0;
+        const addedThisRun = Math.max(0, (state.counts[id] || 0) - baseline);
+        return Math.max(0, target - addedThisRun);
       }
       return projectEnabled(id) ? Math.max(0, projectTarget(id) - (state.counts[id] || 0)) : 0;
     },
@@ -3843,6 +3854,21 @@
       }
       const schedulerWasOn = typeof Scheduler !== 'undefined' && Scheduler.isOn();
       if (schedulerWasOn) Scheduler.stop(`细项运行 ${actionId}`);
+      let actionBaseline = null;
+      const projectId = actionId.startsWith('project_') ? actionId.slice('project_'.length) : null;
+      const repeatableProjectStateKeys = {
+        like: 'friend', dig: 'friend', roach: 'friend',
+        fist: 'bar', cup: 'bar', number: 'bar',
+        extraWish: 'wish',
+      };
+      const projectStateKey = projectId ? repeatableProjectStateKeys[projectId] : null;
+      if (projectStateKey) {
+        const projectState = DailyProjectState.load(projectStateKey);
+        actionBaseline = { projectId, count: Math.max(0, Number(projectState.counts[projectId]) || 0) };
+        // 独立运行是一个新动作，不能把上次刷新前遗留的pending误算成本次成功。
+        projectState.pending = null;
+        DailyProjectState.save(projectStateKey, projectState);
+      }
       if (def.module === 'dailyFriend') {
         const friendState = DailyProjectState.load('friend');
         friendState.pending = null;
@@ -3865,6 +3891,7 @@
         startedAt: Date.now(),
         singleModule: def.module,
         actionScope: actionId,
+        actionBaseline,
         actionNavSteps: def.navSteps,
         resumeSchedulerAfterSingle: schedulerWasOn,
       });

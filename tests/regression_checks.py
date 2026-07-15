@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.54 metadata and shared panel version", "// @version      3.54" in text and "const SCRIPT_VERSION = '3.54';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.55 metadata and shared panel version", "// @version      3.55" in text and "const SCRIPT_VERSION = '3.55';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -36,6 +36,9 @@ require("all non-main feature rows expose action run buttons", text.count('data-
 require("all action run buttons use scoped autopilot", "const ACTION_RUN_DEFS = {" in text and "startAction(actionId)" in text and "actionScope: actionId" in text and "actionNavSteps: def.navSteps" in text)
 require("scoped restaurant actions do not run siblings", "actionEnabled('restaurant', 'restaurant_cockroach'" in text and "actionEnabled('restaurant', 'restaurant_oil'" in text)
 require("scoped daily projects bypass only their own switch", "scope?.startsWith('project_')" in text and "if (scopedProject !== id) return 0;" in text and "Math.max(1, projectTarget(id))" in text)
+require("repeatable project actions use a per-run count baseline", "actionBaseline?.projectId === id" in text and "addedThisRun" in text and "actionBaseline = { projectId, count:" in text)
+require("project action start clears stale pending without clearing daily counts", "repeatableProjectStateKeys" in text and "projectState.pending = null;" in text and "projectState.counts[projectId] = 0" not in text)
+require("server daily NPC keeps all-day completion semantics", "if (id === 'npc') return Math.max(0, target - (state.counts[id] || 0));" in text)
 require("panel scheduler information uses freed space", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
 require("panel falls back to one column on narrow screens", "@media (max-width:620px)" in text and "grid-template-columns:1fr" in text)
 require("panel enlarges font while overriding site line height", "font-size:12px;line-height:1.25;width:560px" in text and "font-size:12px;line-height:1.2;" in text)
