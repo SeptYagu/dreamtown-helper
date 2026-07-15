@@ -2621,9 +2621,9 @@
       const scopedProject = scope?.startsWith('project_') ? scope.slice('project_'.length) : null;
       if (scopedProject) {
         if (scopedProject !== id) return 0;
-        // 可重复项目的独立运行按“本次新增”计数，不受今天此前累计影响；NPC为服务端每日一次，保留全天语义。
+        // 可重复项目的独立运行按“本次新增”计数；NPC/猜数字为服务端每日一次，保留全天语义。
         const target = Math.max(1, projectTarget(id));
-        if (id === 'npc') return Math.max(0, target - (state.counts[id] || 0));
+        if (['npc', 'number'].includes(id)) return Math.max(0, target - (state.counts[id] || 0));
         const baseline = actionState.actionBaseline?.projectId === id
           ? Math.max(0, Number(actionState.actionBaseline.count) || 0)
           : 0;
@@ -3858,7 +3858,7 @@
       const projectId = actionId.startsWith('project_') ? actionId.slice('project_'.length) : null;
       const repeatableProjectStateKeys = {
         like: 'friend', dig: 'friend', roach: 'friend',
-        fist: 'bar', cup: 'bar', number: 'bar',
+        fist: 'bar', cup: 'bar',
         extraWish: 'wish',
       };
       const projectStateKey = projectId ? repeatableProjectStateKeys[projectId] : null;

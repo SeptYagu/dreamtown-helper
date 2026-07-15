@@ -38,7 +38,7 @@ require("scoped restaurant actions do not run siblings", "actionEnabled('restaur
 require("scoped daily projects bypass only their own switch", "scope?.startsWith('project_')" in text and "if (scopedProject !== id) return 0;" in text and "Math.max(1, projectTarget(id))" in text)
 require("repeatable project actions use a per-run count baseline", "actionBaseline?.projectId === id" in text and "addedThisRun" in text and "actionBaseline = { projectId, count:" in text)
 require("project action start clears stale pending without clearing daily counts", "repeatableProjectStateKeys" in text and "projectState.pending = null;" in text and "projectState.counts[projectId] = 0" not in text)
-require("server daily NPC keeps all-day completion semantics", "if (id === 'npc') return Math.max(0, target - (state.counts[id] || 0));" in text)
+require("server once-only projects keep all-day completion semantics", "if (['npc', 'number'].includes(id)) return Math.max(0, target - (state.counts[id] || 0));" in text and "fist: 'bar', cup: 'bar', number: 'bar'" not in text)
 require("panel scheduler information uses freed space", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
 require("panel falls back to one column on narrow screens", "@media (max-width:620px)" in text and "grid-template-columns:1fr" in text)
 require("panel enlarges font while overriding site line height", "font-size:12px;line-height:1.25;width:560px" in text and "font-size:12px;line-height:1.2;" in text)
