@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.50
+// @name         梦想小镇日常一体化 v3.51
 // @namespace    http://tampermonkey.net/
-// @version      3.50
+// @version      3.51
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.51 变更（2026-07-15 饭后食材合成）
+ * - 每次早午晚饭任务完成后，进入橱柜首个1级食材并只点击一次“全部合成”
+ * - 自动驾驶把食材合成紧跟吃饭/体力；餐厅自动添油阈值提高到14000
+ *
  * v3.50 变更（2026-07-15 自动驾驶连续编号与领奖收尾）
  * - 自动驾驶列表补齐邮箱引用行，并把食神、菜园姐、雯姐统一纳入“拜访NPC”一轮
  * - 每日项目合并为一个显示步骤，面板按16项连续编号；今日活跃领奖最后收尾
@@ -260,7 +264,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.50';
+  const SCRIPT_VERSION = '3.51';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -386,6 +390,7 @@
     { id: 'egg',        label: '6. 免费扭蛋',     default: true,  schedule: 'daily' },
     { id: 'foodCoupon', label: '7. 食材券',       default: true,  schedule: 'daily' },  // 用旧 propId + 新页面适配
     { id: 'energy',     label: '8. 吃饭/体力',    default: true,  schedule: 'meal' },
+    { id: 'foodCompound', label: '饭后食材合成', default: true, schedule: 'meal-chained' },
     { id: 'restaurant', label: '9. 餐厅管理（总开关）', default: true, schedule: 'restaurant' },
     { id: 'facility',   label: '10. 设施安装',    default: true,  schedule: 'facility' },
     { id: 'bag',        label: '11. 礼包开启',    default: true,  schedule: 'daily' },
@@ -970,7 +975,69 @@
     },
   };
 
-  // ----- 4. 设施安装/续期（每 12 小时）-----
+  // ----- 4. 饭后食材合成（每个吃饭窗口后只点击一次）-----
+  MOD.foodCompound = {
+    match: (p) => /^\/xz\/cupboard(?:_\d+_1)?$/.test(p) || /^\/xz\/food_compound_\d+$/.test(p),
+    schedule: 'meal-chained',
+    requiresScheduled: true,
+    STATE_KEY: 'food_compound_attempt',
+
+    contextToken() {
+      const phase = Utils.gget('sched_phase', null);
+      if (phase?.module === 'foodCompound' && ['navigating', 'running'].includes(phase.state)) {
+        // 同一餐后任务即使页面异常中断后重建phase，也必须沿用同一token，防止再次点击。
+        return `scheduler-energy:${Utils.gget('sched_energy_lastRun', 0)}`;
+      }
+      const autopilot = Utils.gget('autopilot_state', null);
+      if (autopilot?.enabled) return `autopilot:${autopilot.startedAt || 0}:${autopilot.stepIndex || 0}`;
+      return null;
+    },
+
+    async run() {
+      const token = this.contextToken();
+      if (!token) {
+        Utils.log('食材合成: 非调度/自动驾驶阶段，不接管手动浏览');
+        return true;
+      }
+
+      if (/^\/xz\/cupboard(?:_\d+_1)?$/.test(location.pathname)) {
+        const firstFood = Array.from(document.querySelectorAll('a[href^="/xz/food_compound_"]'))
+          .find(a => /^\/xz\/food_compound_\d+$/.test(a.getAttribute('href') || ''));
+        if (!firstFood) {
+          Utils.log('食材合成: 1级橱柜没有可合成食材，本轮结束');
+          return true;
+        }
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(firstFood);
+        Utils.log(`食材合成: 进入页面首个1级食材 ${firstFood.getAttribute('href')}`);
+        return false;
+      }
+
+      const prior = Utils.gget(this.STATE_KEY, null);
+      if (prior?.token === token && prior.attempted) {
+        Utils.log('食材合成: 本轮已经点击过“全部合成”，不因结果重试');
+        return true;
+      }
+      const allButton = Array.from(document.querySelectorAll('a[onclick]')).find(a => {
+        const onclick = a.getAttribute('onclick') || '';
+        return a.textContent.trim() === '全部合成' && /^doFoodCompound\(\d+,50\)$/.test(onclick);
+      });
+      if (!allButton) {
+        Utils.log('食材合成: 当前食材没有“全部合成”按钮，本轮结束');
+        return true;
+      }
+
+      // 点击前先记账；无论服务器返回成功或失败，本轮都绝不再次点击。
+      Utils.gset(this.STATE_KEY, { token, attempted: true, attemptedAt: Date.now() });
+      await Utils.sleep(Utils.randMs(1, 2));
+      Utils.click(allButton);
+      Utils.log(`食材合成: 已点击一次 ${allButton.getAttribute('onclick')}，本轮结束`);
+      Utils.showStatus('饭后合成', '已点击一次全部合成');
+      return true;
+    },
+  };
+
+  // ----- 5. 设施安装/续期（每 12 小时）-----
   // 原脚本限定 3 项：广播/海报/老鼠夹（不放节油器/蟑螂药）
   // 只用长效，不用金牌/百分百/阿猫独家
   // 新版 URL: /xz/restaurant_facility（概览） + /xz/restaurant_facility_set_{1,2,4}_0（设置）
@@ -1666,7 +1733,7 @@
       const m = oilText.match(/(\d+)\s*\/\s*(\d+)/);
       if (!m) return false;
       const cur = +m[1], max = +m[2];
-      if (cur < 11000) {
+      if (cur < 14000) {
         const addOil = document.querySelector("a[onclick^='addFullOil']");
         if (addOil) {
           await Utils.sleep(Utils.randMs(1, 2));
@@ -3058,6 +3125,17 @@
       },
     },
 
+    // 饭后食材合成：只跟随最近一次吃饭完成，不生成独立周期。
+    {
+      id: 'foodCompoundAfterEnergy', module: 'foodCompound', target: '/xz/cupboard', nav: '橱柜', route: [{ text: '橱柜', href: '/xz/cupboard' }], runMs: 12000, chainedOnly: true,
+      computeNext() {
+        const nowMs = Utils.getServerTime().getTime();
+        const energyLast = Utils.gget('sched_energy_lastRun', 0);
+        const compoundLast = Utils.gget('sched_foodCompoundAfterEnergy_lastRun', 0);
+        return energyLast > compoundLast ? Math.max(energyLast, nowMs) : 0;
+      },
+    },
+
     // 市场：6-23 整点 + 30-300s jitter（秒级抖动防踩踏）
     {
       id: 'market', module: 'market', target: '/xz/market', nav: '菜场', runMs: 12000,
@@ -3597,6 +3675,17 @@
 
       if (this.isOn()) {
         this.computeAll();
+        // 每次早/午/晚饭完成后立即进入橱柜，只执行一次首个1级食材的全部合成。
+        if (phase.id === 'energy' && isEnabled('foodCompound')) {
+          const compoundEntry = ALL_ENTRIES().find(e => e.id === 'foodCompoundAfterEnergy');
+          if (compoundEntry) {
+            compoundEntry.nextRunAt = completedAt;
+            Utils.gset('sched_foodCompoundAfterEnergy_nextAt', completedAt);
+            Utils.log('调度器: 饭后立即执行一次食材全部合成');
+            void this.fireToTarget(compoundEntry);
+            return;
+          }
+        }
         // 餐厅已经回到首页：立即建立邮箱phase，确保其它积压任务不能插到两者之间。
         if (phase.id === 'restaurant' && isEnabled('mailbox')) {
           const mailboxEntry = ALL_ENTRIES().find(e => e.id === 'mailboxAfterRestaurant');
@@ -3634,6 +3723,7 @@
                                          { text: '酒吧',                hrefMatch: '/xz/bar' }] },
       { module: 'extraWish',  navSteps: [{ text: '许愿',                hrefMatch: '/xz/wish' }] },
       { module: 'energy',     navSteps: [{ text: '吃饭活动',            hrefMatch: '/xz/activity_energy' }] },
+      { module: 'foodCompound', navSteps: [{ text: '橱柜',              hrefMatch: '/xz/cupboard' }] },
       { module: 'facility',   navSteps: [{ text: '设施',                hrefMatch: '/xz/restaurant_facility' }] },
       { module: 'bag',        navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' },
                                          { text: '礼包',                hrefMatch: '/xz/warehouse_2_0' }] },

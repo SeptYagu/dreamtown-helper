@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.50 metadata and shared panel version", "// @version      3.50" in text and "const SCRIPT_VERSION = '3.50';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.51 metadata and shared panel version", "// @version      3.51" in text and "const SCRIPT_VERSION = '3.51';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -80,6 +80,15 @@ require("bag matches current result URL", r"/\/xz\/(?:prop|open)_bag_/" in text)
 require("bag clicks only first item", "Utils.click(links[0]);" in text)
 require("bag no longer clickAll", "Utils.clickAll(links, '礼包')" not in text)
 require("bag completes only when empty", "礼包: 无可用" in text and "return true;" in text)
+
+compound_start = text.index("  MOD.foodCompound = {")
+compound_end = text.index("  // ----- 5. 设施安装", compound_start)
+compound = text[compound_start:compound_end]
+require("food compound follows dynamic first level-one item", "a[href^=\"/xz/food_compound_\"]" in compound and "find(a => /^\\/xz\\/food_compound_\\d+$/.test" in compound and "/xz/food_compound_3" not in compound)
+require("food compound clicks only real all button", "a.textContent.trim() === '全部合成'" in compound and "^doFoodCompound\\(\\d+,50\\)$" in compound)
+require("food compound records before its only click", compound.index("Utils.gset(this.STATE_KEY") < compound.index("Utils.click(allButton)") and "本轮已经点击过“全部合成”" in compound)
+require("food compound ignores casual manual browsing", "requiresScheduled: true" in compound and "非调度/自动驾驶阶段，不接管手动浏览" in compound)
+require("food compound retry token is tied to meal completion", "scheduler-energy:${Utils.gget('sched_energy_lastRun', 0)}" in compound)
 
 require("autopilot removed same-page advance", "session.lastPage" not in text and "5s 内重复" not in text)
 require("autopilot clears emergency stop on start", "Utils.gset('autopilot_emergency_stop', false);" in text)
@@ -156,7 +165,7 @@ require("facility cycle checks all three real shop links", "state.checked.includ
 require("facility schedule is fixed at 12h", "lastRun + 12 * 3600000" in text and "runMs: 180000" in text)
 require("facility schedule migration drops stale plan", "v342_facility_schedule_migrated" in text and "sched_facility_nextAt', 0" in text)
 require("restaurant oil has independent switch", "restaurant_oil: true" in text and "restaurant_oil', true" in text)
-require("restaurant oil threshold restored", "if (cur < 11000)" in text)
+require("restaurant oil threshold is 14000", "if (cur < 14000)" in text and "if (cur < 11000)" not in text)
 require("restaurant roach has per-cycle failure stop and hard cap", "MAX_ROACH_ATTEMPTS: 20" in text and "restaurant_roach_attempts" in text and "restaurant_roach_cycle_blocked" in text and "只停止本轮" in text)
 require("restaurant floor detection cannot oscillate between siblings", "el.previousElementSibling || el.nextElementSibling" not in text and ".some(tryMatch);" in text)
 require("scheduler expires persisted phases before module execution", "recoverExpiredPhase(path)" in text and text.index("recoverExpiredPhase(path)") < text.index("const activePhase = Scheduler.isOn()"))
@@ -232,6 +241,8 @@ require("scheduler guardian route is two-step", "{ text: '挑战守护者', href
 require("scheduler recipe route is dynamic", "hrefPattern: '^/xz/cookbook_\\\\d+_3_1$'" in daily and "target: '/xz/cookbook_8_3_1'" not in daily)
 require("scheduler restaurant route uses real href without mutable text", "id: 'restaurant', module: 'restaurant', target: '/xz/restaurant', nav: '餐厅', route: [{ href: '/xz/restaurant' }]" in text)
 dynamic = text[text.index("const DYNAMIC_SCHEDULE = ["):text.index("const ALL_ENTRIES")]
+require("food compound is chained after every completed meal", "id: 'foodCompoundAfterEnergy', module: 'foodCompound'" in dynamic and "energyLast > compoundLast" in dynamic and "chainedOnly: true" in dynamic)
+require("scheduler launches food compound immediately after energy", "phase.id === 'energy' && isEnabled('foodCompound')" in text and "void this.fireToTarget(compoundEntry);" in text)
 require("scheduler mailbox follows restaurant entry", dynamic.index("id: 'restaurant'") < dynamic.index("id: 'mailboxAfterRestaurant'") < dynamic.index("id: 'facility'"))
 require("scheduler mailbox uses real homepage inbox href", "id: 'mailboxAfterRestaurant', module: 'mailbox', target: '/xz/mailbox'" in dynamic and "route: [{ text: '邮箱', href: '/xz/mailbox' }]" in dynamic)
 require("scheduler mailbox is chained only", "chainedOnly: true" in dynamic and "restaurantLast > mailboxLast" in dynamic and "e.chainedOnly ? e.computeNext()" in text)
@@ -243,7 +254,9 @@ require("autopilot mailbox is immediately after restaurant", restaurant_plan < m
 autopilot_plan = text[text.index("  const AutoPilot = {"):text.index("    stateKey: 'autopilot_state'")]
 autopilot_modules = re.findall(r"\{ module: '([^']+)'", autopilot_plan)
 require("autopilot moves restaurant to step 2 and mailbox to step 3", autopilot_modules[:4] == ['signIn', 'restaurant', 'mailbox', 'wish'])
-require("autopilot merges food god into NPC and reorders following steps", len(autopilot_modules) == 19 and autopilot_modules[4:8] == ['box', 'foodCoupon', 'market', 'dailyNpc'] and 'god' not in autopilot_modules)
+require("autopilot merges food god into NPC and reorders following steps", len(autopilot_modules) == 20 and autopilot_modules[4:8] == ['box', 'foodCoupon', 'market', 'dailyNpc'] and 'god' not in autopilot_modules)
+energy_index = autopilot_modules.index('energy')
+require("autopilot puts food compound immediately after energy", autopilot_modules[energy_index:energy_index + 2] == ['energy', 'foodCompound'])
 require("autopilot ends with two seasonal activities then vitality", autopilot_modules[-3:] == ['season', 'egg', 'vitality'])
 require("scheduler supports pattern navigation", "new RegExp(step.hrefPattern).test(href)" in text and "new RegExp(nav.hrefPattern).test(href)" in text)
 require("24h schedules have no cumulative jitter", "slot: '24h', jitterMin: 0, jitterMax: 0" in daily and "jitterMax: 60" not in daily)
