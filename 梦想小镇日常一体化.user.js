@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.56
+// @name         梦想小镇日常一体化 v3.57
 // @namespace    http://tampermonkey.net/
-// @version      3.56
+// @version      3.57
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.57 变更（2026-07-15 每日细项跨页会话修复）
+ * - 每日项目单项运行使用独立持久会话保存目标与本次成功数，跨页不再退回全天计数判定
+ * - AutoPilot结束、总停止或异常残留时同步清理细项会话，避免影响正常每日调度
+ *
  * v3.56 变更（2026-07-15 独立运行显式进度修复）
  * - 可重复每日项目改用本次运行的显式成功计数，不再依赖全天累计差值
  * - 单项运行严格执行面板设置次数：配置0次就不执行，配置N次则本次执行N次
@@ -281,7 +285,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.56';
+  const SCRIPT_VERSION = '3.57';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -501,13 +505,15 @@
     const scope = activeActionScope(moduleId);
     return scope ? scope === actionId : normalEnabled;
   };
+  const PROJECT_ACTION_RUN_KEY = 'project_action_run';
   const recordScopedProjectSuccess = (projectId) => {
     const actionState = Utils.gget('autopilot_state', null);
-    if (!actionState?.enabled || actionState.actionScope !== `project_${projectId}` || actionState.actionProjectId !== projectId) return;
-    const target = Math.max(0, Number(actionState.actionTarget) || 0);
-    actionState.actionCompleted = Math.min(target, Math.max(0, Number(actionState.actionCompleted) || 0) + 1);
-    Utils.gset('autopilot_state', actionState);
-    Utils.log(`细项运行: ${projectId} 本次成功 ${actionState.actionCompleted}/${target}`);
+    const run = Utils.gget(PROJECT_ACTION_RUN_KEY, null);
+    if (!actionState?.enabled || !run?.active || run.projectId !== projectId) return;
+    const target = Math.max(0, Number(run.target) || 0);
+    run.completed = Math.min(target, Math.max(0, Number(run.completed) || 0) + 1);
+    Utils.gset(PROJECT_ACTION_RUN_KEY, run);
+    Utils.log(`细项运行: ${projectId} 本次成功 ${run.completed}/${target}`);
   };
 
   // 餐厅子开关
@@ -2629,17 +2635,20 @@
     save(key, state) { Utils.gset(`project_state_${key}`, state); },
     remaining(id, state) {
       const actionState = Utils.gget('autopilot_state', null);
+      const actionRun = actionState?.enabled ? Utils.gget(PROJECT_ACTION_RUN_KEY, null) : null;
       const scope = actionState?.enabled ? actionState.actionScope : null;
-      const scopedProject = scope?.startsWith('project_') ? scope.slice('project_'.length) : null;
+      const scopedProject = actionRun?.active
+        ? actionRun.projectId
+        : (scope?.startsWith('project_') ? scope.slice('project_'.length) : null);
       if (scopedProject) {
         if (scopedProject !== id) return 0;
         // 可重复项目的独立运行按“本次新增”计数；NPC/猜数字为服务端每日一次，保留全天语义。
-        const target = actionState.actionProjectId === id
-          ? Math.max(0, Number(actionState.actionTarget) || 0)
+        const target = actionRun?.projectId === id
+          ? Math.max(0, Number(actionRun.target) || 0)
           : projectTarget(id);
         if (['npc', 'number'].includes(id)) return Math.max(0, target - (state.counts[id] || 0));
-        const completed = actionState.actionProjectId === id
-          ? Math.max(0, Number(actionState.actionCompleted) || 0)
+        const completed = actionRun?.projectId === id
+          ? Math.max(0, Number(actionRun.completed) || 0)
           : 0;
         return Math.max(0, target - completed);
       }
@@ -3872,6 +3881,7 @@
       }
       const projectId = actionId.startsWith('project_') ? actionId.slice('project_'.length) : null;
       if (projectId && projectTarget(projectId) <= 0) {
+        Utils.gset(PROJECT_ACTION_RUN_KEY, null);
         Utils.log(`细项运行: ${projectId} 设置为0次，本次不执行`);
         Utils.showStatus('细项运行', `${projectId} 设置0次，不执行`, '#888');
         return true;
@@ -3893,6 +3903,17 @@
         // 独立运行是一个新动作，不能把上次刷新前遗留的pending误算成本次成功。
         projectState.pending = null;
         DailyProjectState.save(projectStateKey, projectState);
+      }
+      if (projectId) {
+        Utils.gset(PROJECT_ACTION_RUN_KEY, {
+          active: true,
+          projectId,
+          target: projectTarget(projectId),
+          completed: 0,
+          startedAt: Date.now(),
+        });
+      } else {
+        Utils.gset(PROJECT_ACTION_RUN_KEY, null);
       }
       if (def.module === 'dailyFriend') {
         const friendState = DailyProjectState.load('friend');
@@ -3934,6 +3955,7 @@
         ? (previousState.singleModule ? !!previousState.resumeSchedulerAfterSingle : true)
         : resumeScheduler;
       Utils.gset(this.stateKey, { enabled: false });
+      Utils.gset(PROJECT_ACTION_RUN_KEY, null);
       Utils.gset('autopilot_session', null);
       Utils.log(`⏹ 自动计划停止${reason ? ': ' + reason : ''}`);
       Utils.showStatus('自动驾驶', '已停止', '#f44');
@@ -4205,6 +4227,7 @@
       Scheduler.startWatchdog();
     }
     Panel.create();
+    if (!AutoPilot.isOn()) Utils.gset(PROJECT_ACTION_RUN_KEY, null);
     // 主页加载：若 AutoPilot 开着，显示状态
     if (AutoPilot.isOn()) {
       const state = Utils.gget('autopilot_state', {});
