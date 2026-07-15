@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.53
+// @name         梦想小镇日常一体化 v3.54
 // @namespace    http://tampermonkey.net/
-// @version      3.53
+// @version      3.54
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,9 @@
 // ==/UserScript==
 
 /*
+ * v3.54 变更（2026-07-15 NPC跨区域真实路由修复）
+ * - NPC路线按visited从首页选择下一站，食神/菜场后先回首页，找不到链接不再误报完成
+ *
  * v3.53 变更（2026-07-15 协会安妮拜访）
  * - “拜访NPC”一轮新增协会安妮，经广场往返后继续酒吧雯姐
  *
@@ -270,7 +273,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.53';
+  const SCRIPT_VERSION = '3.54';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -445,6 +448,11 @@
   if (!Utils.gget('v334_npc_round_migrated', false)) {
     Utils.gset('project_npc_count', 1);
     Utils.gset('v334_npc_round_migrated', true);
+  }
+  // v3.53可能在食神页找不到菜场链接后误报整轮完成；升级时仅一次清当天本地NPC进度以便重新核验。
+  if (!Utils.gget('v354_npc_route_reset', false)) {
+    Utils.gset('project_state_npc', null);
+    Utils.gset('v354_npc_route_reset', true);
   }
   DAILY_PROJECT_DEFS.forEach(p => {
     if (Utils.gget(`project_${p.id}_enabled`, null) === null) Utils.gset(`project_${p.id}_enabled`, p.recommended > 0);
@@ -2763,10 +2771,18 @@
 
       const go = async (href) => {
         const link = document.querySelector(`a[href="${href}"]`);
-        if (!link) return false;
+        if (!link) {
+          Utils.warn(`每日NPC: 当前 ${location.pathname} 找不到真实下一跳 ${href}，保持本轮未完成`);
+          return false;
+        }
         await Utils.sleep(Utils.randMs(1, 2));
         Utils.click(link);
         return true;
+      };
+      const goRequired = async (href) => {
+        await go(href);
+        // 成功点击会换页；链接缺失时也必须保持false，绝不能误报整个模块完成。
+        return false;
       };
       const visitHere = async (npcId, label) => {
         if (state.visited.includes(npcId) || DailyProjectState.remaining('npc', state) <= 0) return false;
@@ -2787,33 +2803,43 @@
         return true;
       };
 
-      if (location.pathname === '/xz/') return (await go('/xz/god')) ? false : true;
+      if (location.pathname === '/xz/') {
+        if (!state.visited.includes('god')) return goRequired('/xz/god');
+        if (!state.visited.includes('garden')) return goRequired('/xz/market');
+        if (['deer', 'annie', 'wenjie'].some(id => !state.visited.includes(id))) return goRequired('/xz/square');
+        syncRound();
+        DailyProjectState.save('npc', state);
+        return DailyProjectState.remaining('npc', state) <= 0;
+      }
       if (location.pathname === '/xz/god') {
         if (await visitHere('god', '食神')) return false;
         if (DailyProjectState.remaining('npc', state) <= 0) return true;
-        return (await go('/xz/market')) ? false : true;
+        return goRequired('/xz/');
       }
       if (location.pathname === '/xz/market') {
         if (await visitHere('garden', '菜园姐')) return false;
         if (DailyProjectState.remaining('npc', state) <= 0) return true;
-        return (await go('/xz/square')) ? false : true;
+        return goRequired('/xz/');
       }
       if (location.pathname === '/xz/square') {
         if (await visitHere('deer', '阿鹿')) return false;
         if (DailyProjectState.remaining('npc', state) <= 0) return true;
-        if (!state.visited.includes('annie')) return (await go('/xz/association')) ? false : true;
-        return (await go('/xz/bar')) ? false : true;
+        if (!state.visited.includes('annie')) return goRequired('/xz/association');
+        if (!state.visited.includes('wenjie')) return goRequired('/xz/bar');
+        return goRequired('/xz/');
       }
       if (location.pathname === '/xz/association') {
         if (await visitHere('annie', '安妮')) return false;
         if (DailyProjectState.remaining('npc', state) <= 0) return true;
-        return (await go('/xz/square')) ? false : true;
+        return goRequired('/xz/square');
       }
       if (location.pathname === '/xz/bar') {
         if (await visitHere('wenjie', '雯姐')) return false;
-        return true;
+        if (DailyProjectState.remaining('npc', state) <= 0) return true;
+        return goRequired('/xz/');
       }
-      return true;
+      Utils.warn(`每日NPC: 未识别路径 ${location.pathname}，保持本轮未完成`);
+      return false;
     },
   };
 
