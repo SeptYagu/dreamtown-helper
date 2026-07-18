@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.62
+// @name         梦想小镇日常一体化 v3.63
 // @namespace    http://tampermonkey.net/
-// @version      3.62
+// @version      3.63
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.63 变更（2026-07-18 面板对齐与调度列表去重）
+ * - 餐厅/邮箱合并行去掉小字；每日项目调整说明/运行/总开关顺序，并把重置说明移到标题右侧
+ * - 长期调度器列表不再重复显示上方已经突出展示的下一项或正在运行项
+ *
  * v3.62 变更（2026-07-15 自动驾驶合并运行）
  * - 面板把餐厅管理与餐厅后系统邮箱合并为一步，合并运行会依次执行两者
  * - 每日项目合并行恢复“运行”按钮，一键执行上方当前开启且次数大于0的所有项目
@@ -305,7 +309,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.62';
+  const SCRIPT_VERSION = '3.63';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -451,10 +455,12 @@
   MODULE_DEFS.forEach(m => {
     if (Utils.gget(`mod_${m.id}_enabled`, null) === null) Utils.gset(`mod_${m.id}_enabled`, m.default);
   });
+  if (Utils.gget('mod_dailyProjects_enabled', null) === null) Utils.gset('mod_dailyProjects_enabled', true);
 
   const isEnabled = (id) => {
     if (['dailyFriend', 'dailyBar', 'dailyNpc', 'dailyLuck', 'extraWish'].includes(id)) {
-      return DAILY_PROJECT_DEFS.some(p => p.module === id && projectEnabled(p.id) && projectTarget(p.id) > 0);
+      return Utils.gget('mod_dailyProjects_enabled', true) &&
+        DAILY_PROJECT_DEFS.some(p => p.module === id && projectEnabled(p.id) && projectTarget(p.id) > 0);
     }
     if (id === 'mailbox') {
       return Utils.gget('mod_restaurant_enabled', true) && Utils.gget('restaurant_mailbox', true);
@@ -594,6 +600,7 @@
         #dxzxx-panel .sub{padding-left:8px;font-size:11px;color:#666;}
         #dxzxx-panel details{margin-top:2px;padding-top:2px;border-top:1px solid #eee;font-size:12px;line-height:1.25;}
         #dxzxx-panel summary{cursor:pointer;font-weight:bold;line-height:1.25;}
+        #dxzxx-panel .summary-note{float:right;font-size:10px;font-weight:normal;color:#888;margin-right:2px;}
         #dxzxx-panel select{width:100%;padding:3px;margin:3px 0;border:1px solid #ccc;border-radius:4px;font-size:12px;}
         #dxzxx-panel .project-count{width:40px;padding:1px 2px;border:1px solid #bbb;border-radius:3px;font-size:11px;text-align:center;margin:0 2px;}
         #dxzxx-panel .project-row label{font-size:11px;line-height:1.15;}
@@ -665,9 +672,8 @@
           </div>
         </div>
         <details open>
-          <summary>每日项目（早饭后执行）</summary>
+          <summary>每日项目（早饭后执行）<span class="summary-note">按服务器06:00重置；次数按成功动作记账；搬家不执行</span></summary>
           <div id="dxzxx-project-rows"></div>
-          <div class="label">按服务器06:00重置；次数按成功动作记账。搬家不执行。</div>
         </details>
         <details open id="dxzxx-module-switches">
           <summary>自动驾驶功能开关（按执行顺序）</summary>
@@ -690,7 +696,7 @@
           const enabled = isEnabled('restaurant');
           row.className = 'row';
           row.dataset.modules = GROUP_RUN_DEFS.restaurantAndMailbox.modules.join(',');
-          row.innerHTML = `<label>${displayStep}. 餐厅管理 <span class="plan-ref">（含系统邮箱，见左上子开关）</span></label><button class="group-run" data-run-group="restaurantAndMailbox">运行</button><span class="toggle ${enabled ? 'on' : 'off'}" data-id="restaurant">${enabled ? '开' : '关'}</span>`;
+          row.innerHTML = `<label>${displayStep}. 餐厅管理与系统邮箱</label><button class="group-run" data-run-group="restaurantAndMailbox">运行</button><span class="toggle ${enabled ? 'on' : 'off'}" data-id="restaurant">${enabled ? '开' : '关'}</span>`;
           rows.appendChild(row);
           return;
         }
@@ -698,9 +704,10 @@
           if (step.module !== dailyProjectModules[0]) return;
           displayStep++;
           const row = document.createElement('div');
+          const enabled = Utils.gget('mod_dailyProjects_enabled', true);
           row.className = 'row plan-reference';
           row.dataset.modules = dailyProjectModules.join(',');
-          row.innerHTML = `<label>${displayStep}. 每日项目</label><button class="group-run" data-run-group="dailyProjects">运行</button><span class="plan-ref">见上方每日项目配置</span>`;
+          row.innerHTML = `<label>${displayStep}. 每日项目</label><span class="plan-ref">见上方每日项目配置</span><button class="group-run" data-run-group="dailyProjects">运行</button><span class="toggle ${enabled ? 'on' : 'off'}" data-id="dailyProjects">${enabled ? '开' : '关'}</span>`;
           rows.appendChild(row);
           return;
         }
@@ -946,15 +953,18 @@
         // 列出所有启用模块的下次时间
         const all = ALL_ENTRIES().filter(e => e.nextRunAt && isEnabled(e.module));
         all.sort((a, b) => a.nextRunAt - b.nextRunAt);
+        const highlightedId = phase?.state === 'running' ? phase.id : next?.id;
+        const highlightedAt = phase?.state === 'running' ? null : next?.at;
+        const upcoming = all.filter(e => e.id !== highlightedId || (highlightedAt !== null && e.nextRunAt !== highlightedAt));
         html += '<div style="margin-top:4px;border-top:1px solid #444;padding-top:4px;">';
-        const top5 = all.slice(0, 6);
+        const top5 = upcoming.slice(0, 6);
         top5.forEach(e => {
           const dt = new Date(e.nextRunAt);
           const hh = String(dt.getHours()).padStart(2, '0');
           const mm = String(dt.getMinutes()).padStart(2, '0');
           html += `<div>${hh}:${mm} <span style="color:#aaa;">${e.id}</span></div>`;
         });
-        if (all.length > 6) html += `<div style="color:#888;">... 共 ${all.length} 项</div>`;
+        if (upcoming.length > 6) html += `<div style="color:#888;">... 共 ${all.length} 项</div>`;
         html += '</div>';
         statusEl.innerHTML = html;
       } else {
