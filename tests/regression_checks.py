@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.66 metadata and shared panel version", "// @version      3.66" in text and "const SCRIPT_VERSION = '3.66';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.67 metadata and shared panel version", "// @version      3.67" in text and "const SCRIPT_VERSION = '3.67';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -136,7 +136,7 @@ require("guardian uses ten shots above one thousand hp and single below", "parse
 require("guardian has a twenty minute cross-page lifetime", "maxPhaseAgeMs: 20 * 60000" in text and "MOD[phase.module]?.maxPhaseAgeMs" in text)
 require("v366 retries a guardian falsely completed by old timeout", "v366_guardian_timeout_retry_migrated" in text and "sched_guardian_lastRun', 0" in text and "sched_guardian_nextAt', 0" in text)
 require("guardian can replenish repeatedly after verified stock is consumed", "purchase?.verifiedAt && have < purchase.after" in text and text.count("Utils.gset(this.PURCHASE_KEY, null);") >= 4 and "recentlyVerified" not in text)
-require("guardian production replenishment is 300 below 100", "REPLENISH_BELOW: 100" in text and "BUY_COUNT: 300" in text and "buyByActivity(0,82,0)" in text)
+require("guardian production replenishment is 300 below 200", "REPLENISH_BELOW: 200" in text and "BUY_COUNT: 300" in text and "buyByActivity(0,82,0)" in text)
 require("guardian parses both inventories without zero fallback", "parseGuardianInventory()" in text and "parseStoreInventory()" in text and "拥有数量\\s*[：:]\\s*(\\d+)" in text and "have === null" in text)
 require("guardian records and verifies one purchase", "PURCHASE_KEY: 'guardian_missile_purchase'" in text and "before: have" in text and "have >= purchase.before + this.BUY_COUNT" in text and "12小时内不重复购买" in text)
 require("guardian supports current and legacy quantity input ids", "getElementById('buyNum') || document.getElementById('buy_num')" in text)

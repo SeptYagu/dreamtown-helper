@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.66
+// @name         梦想小镇日常一体化 v3.67
 // @namespace    http://tampermonkey.net/
-// @version      3.66
+// @version      3.67
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,9 @@
 // ==/UserScript==
 
 /*
+ * v3.67 变更（2026-07-19 守护者补货）
+ * - 爆裂飞弹库存低于200时购买300个，并保留购买后返回战斗、继续打完本轮的逻辑
+ *
  * v3.66 变更（2026-07-19 守护者十连与整轮超时）
  * - 战斗页精确读取爆裂飞弹所在行库存及守护者血量；血量>1000使用十连，≤1000改为单发
  * - 守护者跨页整轮寿命延长到20分钟，修复单发刷新约60秒后打一半被调度器提前收尾
@@ -321,7 +324,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.66';
+  const SCRIPT_VERSION = '3.67';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -2409,7 +2412,7 @@
     schedule: 'guardian',
     requiresScheduled: true,
     PURCHASE_KEY: 'guardian_missile_purchase',
-    REPLENISH_BELOW: 100,
+    REPLENISH_BELOW: 200,
     BUY_COUNT: 300,
     FAILED_RETRY_MS: 12 * 3600000,
     VERIFIED_GRACE_MS: 12 * 3600000,
