@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.65
+// @name         梦想小镇日常一体化 v3.66
 // @namespace    http://tampermonkey.net/
-// @version      3.65
+// @version      3.66
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.66 变更（2026-07-19 守护者十连与整轮超时）
+ * - 战斗页精确读取爆裂飞弹所在行库存及守护者血量；血量>1000使用十连，≤1000改为单发
+ * - 守护者跨页整轮寿命延长到20分钟，修复单发刷新约60秒后打一半被调度器提前收尾
+ *
  * v3.65 变更（2026-07-18 守护者与食谱固定日程）
  * - 守护者改为每日06:05后随机延迟0-10分钟，食谱升级改为每日08:10后随机延迟0-10分钟
  * - 两项均按服务器自然日执行一次，错过时当天补跑，不再随上次完成时刻逐日漂移
@@ -317,7 +321,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.65';
+  const SCRIPT_VERSION = '3.66';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -2409,6 +2413,7 @@
     BUY_COUNT: 300,
     FAILED_RETRY_MS: 12 * 3600000,
     VERIFIED_GRACE_MS: 12 * 3600000,
+    maxPhaseAgeMs: 20 * 60000,
 
     loadPurchase() {
       const purchase = Utils.gget(this.PURCHASE_KEY, null);
@@ -2425,9 +2430,25 @@
     },
 
     parseGuardianInventory() {
-      const text = Array.from(document.querySelectorAll('p')).map(p => p.textContent).join(' ');
-      const match = text.match(/\[爆裂飞弹\][\s\S]{0,40}?拥有\s*(\d+)\s*个/);
+      const row = Array.from(document.querySelectorAll('p')).find(p =>
+        p.querySelector('a[href="/xz/prop_82"]') && /\[爆裂飞弹\]/.test(p.textContent || '')
+      );
+      const match = (row?.textContent || '').match(/拥有\s*(\d+)\s*个/);
       return match ? Number(match[1]) : null;
+    },
+
+    parseGuardianHp() {
+      const row = Array.from(document.querySelectorAll('p')).find(p =>
+        /守护者剩余血量[：:]/.test(p.textContent || '')
+      );
+      const match = (row?.textContent || '').match(/守护者剩余血量[：:]\s*(\d+)/);
+      return match ? Number(match[1]) : null;
+    },
+
+    findLaunchButton(count) {
+      return Array.from(document.querySelectorAll('a')).find(a =>
+        (a.getAttribute('onclick') || '').replace(/\s+/g, '') === `guardianLaunch(82,${count})`
+      ) || null;
     },
 
     parseStoreInventory() {
@@ -2450,12 +2471,8 @@
 
     async run() {
       if (location.pathname === '/xz/guardian') {
-        // 发射按钮: a[onclick="guardianLaunch(82, 1)"] 文本"发射"
-        const launchBtn = Array.from(document.querySelectorAll('a')).find(a => {
-          const oc = a.getAttribute('onclick') || '';
-          return oc.includes('guardianLaunch') && oc.includes('82') && oc.includes(',1)');
-        });
-        if (!launchBtn) {
+        const singleLaunchBtn = this.findLaunchButton(1);
+        if (!singleLaunchBtn) {
           Utils.log('守护者: 已被击败或按钮未找到');
           Utils.showStatus('守护者', '已完成');
           return true;
@@ -2468,14 +2485,30 @@
           return true;
         }
 
-        const purchase = this.loadPurchase();
-        const recentlyVerified = purchase?.verifiedAt &&
-          Date.now() - purchase.verifiedAt < this.VERIFIED_GRACE_MS &&
-          have <= purchase.after;
-        if (have >= this.REPLENISH_BELOW || recentlyVerified) {
+        const hp = this.parseGuardianHp();
+        if (hp === null) {
+          Utils.warn('守护者: 无法读取剩余血量，安全停止（不购买、不发射）');
+          Utils.showStatus('守护者', '血量读取失败');
+          return true;
+        }
+
+        let purchase = this.loadPurchase();
+        // 已验证补货记录只保护同一次购买响应；战斗消耗后库存下降，必须允许下一轮低库存再次补货。
+        if (purchase?.verifiedAt && have < purchase.after) {
+          Utils.gset(this.PURCHASE_KEY, null);
+          purchase = null;
+        }
+        if (have >= this.REPLENISH_BELOW) {
+          const launchCount = hp > 1000 ? 10 : 1;
+          const launchBtn = launchCount === 10 ? this.findLaunchButton(10) : singleLaunchBtn;
+          if (!launchBtn) {
+            Utils.warn(`守护者: 血量 ${hp} 应发射${launchCount}次，但找不到对应真实按钮`);
+            Utils.showStatus('守护者', '发射按钮读取失败');
+            return true;
+          }
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(launchBtn);
-          Utils.log(`守护者: 发射爆裂（库存 ${have}${recentlyVerified ? '，本轮已补货' : ''}）`);
+          Utils.log(`守护者: 血量 ${hp}，发射爆裂${launchCount}次（库存 ${have}）`);
           return false;
         }
 
@@ -2500,6 +2533,12 @@
         }
 
         let purchase = this.loadPurchase();
+        if (purchase?.verifiedAt && have < purchase.after) {
+          const previousAfter = purchase.after;
+          Utils.gset(this.PURCHASE_KEY, null);
+          purchase = null;
+          Utils.log(`守护者: 已验证补货库存已由 ${previousAfter} 消耗至 ${have}，允许再次按阈值补货`);
+        }
         if (purchase?.clickedAt && !purchase.verifiedAt) {
           if (have >= purchase.before + this.BUY_COUNT) {
             purchase = { ...purchase, after: have, verifiedAt: Date.now() };
@@ -3418,7 +3457,8 @@
     async recoverExpiredPhase(currentPath) {
       const phase = Utils.gget(PHASE_KEY, null);
       if (!phase || !['navigating', 'running'].includes(phase.state) || !phase.startedAt) return false;
-      const maxAgeMs = Math.max(60000, (phase.runMs || 10000) + 30000);
+      const moduleMaxAgeMs = phase.module ? MOD[phase.module]?.maxPhaseAgeMs : 0;
+      const maxAgeMs = Math.max(60000, moduleMaxAgeMs || (phase.runMs || 10000) + 30000);
       if (Date.now() - phase.startedAt <= maxAgeMs) return false;
 
       Utils.warn(`调度器: ${phase.id}/${phase.state} 已超过 ${Math.round(maxAgeMs / 1000)} 秒，终止旧阶段并返回首页`);
@@ -4389,6 +4429,12 @@
       Utils.gset('sched_guardian_nextAt', 0);
       Utils.gset('sched_recipe_nextAt', 0);
       Utils.gset('v365_guardian_recipe_daily_migrated', true);
+    }
+    // v3.66：v3.65可能把60秒超时的半场守护者误记为当天完成；清一次记录让更新后立即补打。
+    if (!Utils.gget('v366_guardian_timeout_retry_migrated', false)) {
+      Utils.gset('sched_guardian_lastRun', 0);
+      Utils.gset('sched_guardian_nextAt', 0);
+      Utils.gset('v366_guardian_timeout_retry_migrated', true);
     }
     // 先填充全部nextRunAt，再创建/显示面板；否则调度列表晚到会推动右侧按钮位置。
     if (Scheduler.isOn()) {

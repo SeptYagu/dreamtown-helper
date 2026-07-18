@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.65 metadata and shared panel version", "// @version      3.65" in text and "const SCRIPT_VERSION = '3.65';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.66 metadata and shared panel version", "// @version      3.66" in text and "const SCRIPT_VERSION = '3.66';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -131,7 +131,11 @@ require("merged autopilot switches describe execution order", "自动驾驶功�
 require("autopilot recipe route is dynamic", "{ text: '可升级'," in text and "hrefPattern: '^/xz/cookbook_\\\\d+_3_1$'" in text)
 require("autopilot is labelled one-shot", "🚀 立即跑一轮全套" in text and "🚀 自动跑全套日常" not in text)
 
-require("guardian continues one shot per page", "guardianLaunch') && oc.includes('82') && oc.includes(',1)'" in text)
+require("guardian reads inventory only from the explosive missile row", "p.querySelector('a[href=\"/xz/prop_82\"]')" in text and "parseGuardianInventory()" in text)
+require("guardian uses ten shots above one thousand hp and single below", "parseGuardianHp()" in text and "hp > 1000 ? 10 : 1" in text and "guardianLaunch(82,${count})" in text)
+require("guardian has a twenty minute cross-page lifetime", "maxPhaseAgeMs: 20 * 60000" in text and "MOD[phase.module]?.maxPhaseAgeMs" in text)
+require("v366 retries a guardian falsely completed by old timeout", "v366_guardian_timeout_retry_migrated" in text and "sched_guardian_lastRun', 0" in text and "sched_guardian_nextAt', 0" in text)
+require("guardian can replenish repeatedly after verified stock is consumed", "purchase?.verifiedAt && have < purchase.after" in text and text.count("Utils.gset(this.PURCHASE_KEY, null);") >= 4 and "recentlyVerified" not in text)
 require("guardian production replenishment is 300 below 100", "REPLENISH_BELOW: 100" in text and "BUY_COUNT: 300" in text and "buyByActivity(0,82,0)" in text)
 require("guardian parses both inventories without zero fallback", "parseGuardianInventory()" in text and "parseStoreInventory()" in text and "拥有数量\\s*[：:]\\s*(\\d+)" in text and "have === null" in text)
 require("guardian records and verifies one purchase", "PURCHASE_KEY: 'guardian_missile_purchase'" in text and "before: have" in text and "have >= purchase.before + this.BUY_COUNT" in text and "12小时内不重复购买" in text)
@@ -305,7 +309,7 @@ require("scheduler supports pattern navigation", "new RegExp(step.hrefPattern).t
 require("guardian uses daily 06:05 plus up to ten minutes", "id: 'guardian'" in daily and "slot: '6:05', jitterMin: 0, jitterMax: 10" in daily)
 require("recipe uses daily 08:10 plus up to ten minutes", "id: 'recipe'" in daily and "slot: '8:10', jitterMin: 0, jitterMax: 10" in daily)
 require("guardian and recipe no longer use drifting 24h slots", "slot: '24h'" not in daily)
-require("guardian recipe schedule migration preserves last run", "v365_guardian_recipe_daily_migrated" in text and "sched_guardian_nextAt', 0" in text and "sched_recipe_nextAt', 0" in text and "sched_guardian_lastRun', 0" not in text and "sched_recipe_lastRun', 0" not in text)
+require("guardian recipe daily migration exists", "v365_guardian_recipe_daily_migrated" in text and "sched_guardian_nextAt', 0" in text and "sched_recipe_nextAt', 0" in text)
 require("scheduler recomputes all tasks after return", "this.computeAll();\n        this.scheduleNext();" in text)
 require("scheduler records completion in server time", "const completedAt = Utils.getServerTime().getTime();" in text and "Utils.gset(`sched_${phase.id}_lastRun`, completedAt);" in text)
 require("fixed daily tasks catch up after missed slot", "if (lastDay !== today && next.getTime() <= nowMs) return nowMs + 5000;" in text)
