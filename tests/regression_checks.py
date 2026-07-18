@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.63 metadata and shared panel version", "// @version      3.63" in text and "const SCRIPT_VERSION = '3.63';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.64 metadata and shared panel version", "// @version      3.64" in text and "const SCRIPT_VERSION = '3.64';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -32,7 +32,8 @@ require("panel action buttons use two columns", 'class="panel-actions"' in text 
 require("global stop button is permanent and reserves its row", "⏹ 停止当前操作</button>" in text and "#dxzxx-stop{grid-column:1/-1;}" in text and "dxzxx-stop\" style=\"background:#f44;color:#fff;display:none" not in text)
 require("autopilot refresh never inserts or removes global stop", "stopBtn.style.display" not in text)
 require("global stop is mouse only", "addEventListener('keydown'" not in text and "e.key === 'Escape'" not in text and "（Esc）" not in text)
-require("all non-main feature rows expose action run buttons", text.count('data-run-action="restaurant_') == 3 and 'data-run-action="recipe_learn"' in text and 'data-run-action="project_${p.id}"' in text)
+require("all remaining non-main feature rows expose action run buttons", text.count('data-run-action="restaurant_') == 3 and 'data-run-action="project_${p.id}"' in text)
+require("duplicate recipe learning control is removed", 'data-run-action="recipe_learn"' not in text and 'data-sub="recipe_learn"' not in text and 'recipe_learn:' not in text)
 require("all action run buttons use scoped autopilot", "const ACTION_RUN_DEFS = {" in text and "startAction(actionId)" in text and "actionScope: actionId" in text and "actionNavSteps: def.navSteps" in text)
 require("scoped restaurant actions do not run siblings", "actionEnabled('restaurant', 'restaurant_cockroach'" in text and "actionEnabled('restaurant', 'restaurant_oil'" in text)
 require("scoped daily projects bypass only their own switch", "scope?.startsWith('project_')" in text and "if (scopedProject !== id) return 0;" in text and "actionRun?.projectId === id" in text)
@@ -261,8 +262,8 @@ require("autopilot starts recipe round once per step", "state.recipePreparedStep
 require("recipe scans only the upgradable category", "pageInfo.category !== 3" in text and "findUpgradableCategoryLink" in text)
 require("recipe persists the exact filtered list page", "scanState.listPath = location.pathname;" in text and "scanState.street = pageInfo.street;" in text)
 require("recipe pagination stays in requested dynamic category", "findNextPageByCategory(street, category)" in text and "new RegExp(`^/xz/cookbook_${street}_${category}_\\\\d+$`)" in text)
-require("recipe learning action scans all category only", "startLearnScan(source)" in text and "pageInfo.category !== 0" in text and "findAllCategoryLink" in text and "findNextPageByCategory(pageInfo.street, 0)" in text)
-require("recipe learning action skips blocked details", "findLearnItem(scanState.blocked || [])" in text and "食谱学习失败|学习条件不足|无法学习" in text)
+require("recipe upgrade includes unlearned items from upgradable category", "const isUnlearned = /未学习|尚未学习|未学/.test(lvlText);" in text and "const cur = isUnlearned ? -1" in text)
+require("recipe always learns before parsing and upgrading", "可升级分类发现未学习食谱，已先点学习" in detail and detail.index("const learnBtn") < detail.index("const currentLevelText"))
 return_start = text.index("    returnToList() {")
 return_end = text.index("// ----- 12. 守护者", return_start)
 recipe_return = text[return_start:return_end]

@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.63
+// @name         梦想小镇日常一体化 v3.64
 // @namespace    http://tampermonkey.net/
-// @version      3.63
+// @version      3.64
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.64 变更（2026-07-18 食谱学习并入升级）
+ * - 删除重复且会卡在食谱根页的“自动学习新食谱”子开关与独立运行入口
+ * - 食谱升级统一扫描真实“可升级”分类；遇到未学习项先学习，再继续按目标等级升级
+ *
  * v3.63 变更（2026-07-18 面板对齐与调度列表去重）
  * - 餐厅/邮箱合并行去掉小字；每日项目调整说明/运行/总开关顺序，并把重置说明移到标题右侧
  * - 长期调度器列表不再重复显示上方已经突出展示的下一项或正在运行项
@@ -309,7 +313,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.63';
+  const SCRIPT_VERSION = '3.64';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -439,7 +443,7 @@
     { id: 'restaurant', label: '9. 餐厅管理（总开关）', default: true, schedule: 'restaurant' },
     { id: 'facility',   label: '10. 设施安装',    default: true,  schedule: 'facility' },
     { id: 'bag',        label: '11. 礼包开启',    default: true,  schedule: 'daily' },
-    { id: 'recipe',     label: '12. 食谱升级',    default: true,  schedule: 'recipe' },    // 默认开；目标等级/学习开关可调
+    { id: 'recipe',     label: '12. 食谱升级',    default: true,  schedule: 'recipe' },    // 默认开；目标等级可调，未学习项自动先学习
     { id: 'guardian',   label: '13. 守护者(爆裂)', default: true, schedule: 'guardian' },
     { id: 'dailyFriend', label: '每日好友项目', default: true, schedule: 'daily-project', hidden: true },
     { id: 'dailyBar',    label: '每日酒吧项目', default: true, schedule: 'daily-project', hidden: true },
@@ -513,7 +517,6 @@
     restaurant_cockroach: { module: 'restaurant', navSteps: [{ text: '餐厅', hrefMatch: '/xz/restaurant' }] },
     restaurant_oil: { module: 'restaurant', navSteps: [{ text: '餐厅', hrefMatch: '/xz/restaurant' }] },
     restaurant_mailbox: { module: 'mailbox', navSteps: [{ text: '邮箱', hrefMatch: '/xz/mailbox' }] },
-    recipe_learn: { module: 'recipe', navSteps: [{ text: '食谱', hrefMatch: '/xz/cookbook' }, { text: '全部', hrefPattern: '^/xz/cookbook_\\d+_0_1$' }] },
     project_like: { module: 'dailyFriend', navSteps: [{ text: '好友', hrefMatch: '/xz/friend' }] },
     project_dig: { module: 'dailyFriend', navSteps: [{ text: '好友', hrefMatch: '/xz/friend' }] },
     project_roach: { module: 'dailyFriend', navSteps: [{ text: '好友', hrefMatch: '/xz/friend' }] },
@@ -649,7 +652,6 @@
                 <option value="金牌4级">升级到金牌4级</option>
                 <option value="金牌5级">升级到金牌5级</option>
               </select>
-              <div class="row sub"><label>📖 自动学习新食谱</label><button class="action-run" data-run-action="recipe_learn">运行</button><span class="toggle ${Utils.gget('recipe_learn', true) ? 'on' : 'off'}" data-sub="recipe_learn">${Utils.gget('recipe_learn', true) ? '开' : '关'}</span></div>
             </details>
             <div class="panel-actions">
               <button class="run-btn" id="dxzxx-run">▶ 立即执行本页</button>
@@ -2047,7 +2049,6 @@
   //   - 翻页：找"下一页"链接
   // 配置（GM 持久化）：
   //   recipe_target_level: 目标等级（'off'/'中品'/'上品'/'极品'/'金牌'/'金牌1-10级'）
-  //   recipe_learn: 是否自动学习（默认 true）
   MOD.recipe = {
     match: (p) => /^\/xz\/cook_\d+/.test(p) || /\/xz\/cookbook_/.test(p) || /\/xz\/cook_universal_/.test(p),
     schedule: 'recipe',
@@ -2064,7 +2065,6 @@
     getConfig() {
       return {
         targetLevel: Utils.gget('recipe_target_level', 'off'),
-        learn: Utils.gget('recipe_learn', true),
       };
     },
 
@@ -2097,18 +2097,6 @@
       return true;
     },
 
-    startLearnScan(source) {
-      Utils.gset(this.scanStateKey, {
-        targetLevel: '__learn__',
-        blocked: [],
-        active: true,
-        source,
-        startedAt: Date.now(),
-      });
-      Utils.log(`食谱: ${source}开启独立学习扫描`);
-      return true;
-    },
-
     parseCookbookPath(path = location.pathname) {
       const match = path.match(/^\/xz\/cookbook_(\d+)_(\d+)_(\d+)$/);
       return match ? { street: Number(match[1]), category: Number(match[2]), page: Number(match[3]) } : null;
@@ -2120,15 +2108,6 @@
         const href = a.getAttribute('href') || '';
         const match = href.match(/^\/xz\/cookbook_(\d+)_3_1$/);
         return text === '可升级' && match && (street == null || Number(match[1]) === street);
-      }) || null;
-    },
-
-    findAllCategoryLink(street = null) {
-      return Array.from(document.querySelectorAll('a')).find(a => {
-        const text = (a.textContent || '').trim();
-        const href = a.getAttribute('href') || '';
-        const match = href.match(/^\/xz\/cookbook_(\d+)_0_1$/);
-        return text === '全部' && match && (street == null || Number(match[1]) === street);
       }) || null;
     },
 
@@ -2144,11 +2123,6 @@
     // 主入口
     async run() {
       const path = location.pathname;
-      if (activeActionScope('recipe') === 'recipe_learn') {
-        if (/^\/xz\/cook_\d+/.test(path)) return this.processLearnDetail();
-        if (/cookbook_/.test(path)) return this.processLearnCookbook();
-        return true;
-      }
       const cfg = this.getConfig();
       if (cfg.targetLevel === 'off') {
         Utils.log('食谱: 长期目标为关闭，不自动扫描/学习');
@@ -2173,70 +2147,6 @@
         return this.returnToList() ? false : true;
       }
       return true;
-    },
-
-    async processLearnCookbook() {
-      const scanState = Utils.gget(this.scanStateKey, null) || { targetLevel: '__learn__', blocked: [], active: true };
-      if (!scanState.active) return true;
-      const pageInfo = this.parseCookbookPath();
-      if (!pageInfo || pageInfo.category !== 0) {
-        const allLink = this.findAllCategoryLink(pageInfo?.street ?? scanState.street ?? null);
-        if (!allLink) {
-          Utils.warn('食谱学习: 找不到真实“全部”分类入口');
-          return true;
-        }
-        await Utils.sleep(Utils.randMs(1, 2));
-        Utils.click(allLink);
-        return false;
-      }
-
-      scanState.street = pageInfo.street;
-      scanState.listPath = location.pathname;
-      Utils.gset(this.scanStateKey, scanState);
-      const learnItem = this.findLearnItem(scanState.blocked || []);
-      if (learnItem) {
-        await Utils.sleep(Utils.randMs(1, 2));
-        Utils.click(learnItem.link);
-        Utils.log(`食谱学习: 进入 ${learnItem.name}`);
-        return false;
-      }
-      const nextPage = this.findNextPageByCategory(pageInfo.street, 0);
-      if (nextPage) {
-        await Utils.sleep(Utils.randMs(1, 2));
-        Utils.click(nextPage);
-        return false;
-      }
-      scanState.active = false;
-      scanState.completedAt = Date.now();
-      Utils.gset(this.scanStateKey, scanState);
-      Utils.log('食谱学习: 全部分类扫描完成');
-      return true;
-    },
-
-    async processLearnDetail() {
-      const text = document.body.textContent || '';
-      if (/食谱学习失败|学习条件不足|无法学习/.test(text)) {
-        const scanState = Utils.gget(this.scanStateKey, null) || { targetLevel: '__learn__', blocked: [], active: true };
-        const itemPath = location.pathname.match(/^\/xz\/cook_\d+/)?.[0];
-        scanState.blocked ||= [];
-        if (itemPath && !scanState.blocked.includes(itemPath)) scanState.blocked.push(itemPath);
-        Utils.gset(this.scanStateKey, scanState);
-        Utils.warn(`食谱学习: ${itemPath || '当前食谱'} 条件不足，本轮跳过`);
-        return this.returnToList() ? false : true;
-      }
-      const learnBtn = Utils.findByText('a', '学习');
-      if (learnBtn) {
-        await Utils.sleep(Utils.randMs(1, 2));
-        Utils.click(learnBtn);
-        Utils.log('食谱学习: 已点学习');
-        return false;
-      }
-      const scanState = Utils.gget(this.scanStateKey, null) || { targetLevel: '__learn__', blocked: [], active: true };
-      const itemPath = location.pathname.match(/^\/xz\/cook_\d+/)?.[0];
-      scanState.blocked ||= [];
-      if (itemPath && !scanState.blocked.includes(itemPath)) scanState.blocked.push(itemPath);
-      Utils.gset(this.scanStateKey, scanState);
-      return this.returnToList() ? false : true;
     },
 
     // 12.1 列表页（cookbook_*）
@@ -2304,29 +2214,13 @@
           if (!grey || !red) continue;
           if (!red.textContent.includes('可升级')) continue;
           const lvlText = grey.textContent.trim();
-          const cur = this.LEVEL_MAP[lvlText];
+          const isUnlearned = /未学习|尚未学习|未学/.test(lvlText);
+          const cur = isUnlearned ? -1 : this.LEVEL_MAP[lvlText];
           if (cur === undefined) continue;
           if (cur >= targetValue) continue;
           const link = p.querySelector('a[href^="/xz/cook_"]');
           if (link && blocked.includes(link.getAttribute('href') || '')) continue;
           if (link) return { name: link.textContent.trim(), level: lvlText, link };
-        }
-      }
-      return null;
-    },
-
-    // 找未学习项（无"已学习"或"可升级"标记）
-    findLearnItem(blocked = []) {
-      const sections = document.querySelectorAll('.gen_background_blue.s_room.s_font');
-      for (const section of sections) {
-        for (const p of section.querySelectorAll('p')) {
-          const txt = p.textContent;
-          if (/已学习|可升级|等级[:：]/.test(txt)) continue;
-          const link = p.querySelector('a[href^="/xz/cook_"]');
-          if (link && blocked.includes(link.getAttribute('href') || '')) continue;
-          if (link) {
-            return { name: link.textContent.trim(), link };
-          }
         }
       }
       return null;
@@ -2369,14 +2263,12 @@
       }
 
       // 12.2.1 学习：未学习时显示"学习"按钮
-      if (cfg.learn) {
-        const learnBtn = Utils.findByText('a', '学习');
-        if (learnBtn) {
-          await Utils.sleep(Utils.randMs(1, 2));
-          Utils.click(learnBtn);
-          Utils.log('食谱: 已点学习');
-          return false;
-        }
+      const learnBtn = Utils.findByText('a', '学习');
+      if (learnBtn) {
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(learnBtn);
+        Utils.log('食谱: 可升级分类发现未学习食谱，已先点学习');
+        return false;
       }
 
       // 每次刷新都重新读取当前等级；达到目标必须立即返回，绝不能继续消耗食材
@@ -4257,8 +4149,7 @@
 
       // 同一次AutoPilot食谱步骤只准备一次；跨页面刷新不能反复清空blocked集合。
       if (step.module === 'recipe' && state.recipePreparedStep !== stepIdx) {
-        if (state.actionScope === 'recipe_learn') MOD.recipe.startLearnScan('细项运行');
-        else MOD.recipe.startScan('自动驾驶');
+        MOD.recipe.startScan('自动驾驶');
         state.recipePreparedStep = stepIdx;
         Utils.gset(this.stateKey, state);
       }
