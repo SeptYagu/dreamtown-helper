@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.64
+// @name         梦想小镇日常一体化 v3.65
 // @namespace    http://tampermonkey.net/
-// @version      3.64
+// @version      3.65
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.65 变更（2026-07-18 守护者与食谱固定日程）
+ * - 守护者改为每日06:05后随机延迟0-10分钟，食谱升级改为每日08:10后随机延迟0-10分钟
+ * - 两项均按服务器自然日执行一次，错过时当天补跑，不再随上次完成时刻逐日漂移
+ *
  * v3.64 变更（2026-07-18 食谱学习并入升级）
  * - 删除重复且会卡在食谱根页的“自动学习新食谱”子开关与独立运行入口
  * - 食谱升级统一扫描真实“可升级”分类；遇到未学习项先学习，再继续按目标等级升级
@@ -313,7 +317,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.64';
+  const SCRIPT_VERSION = '3.65';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -427,8 +431,8 @@
 
   // ==================== 模块注册表 ====================
   // 这里定义面板主开关；AutoPilot.PLAN 在后文另行定义完整执行顺序，并包含隐藏的每日项目模块。
-  // schedule: daily(每日7:30±15min) | hourly(整点) | restaurant(17-45min随机) | guardian(24h硬定时)
-  //  | recipe(24h硬定时) | meal(每日3期) | facility(智能:剩余+1h)
+  // schedule: daily(每日固定时段) | hourly(整点) | restaurant(17-45min随机)
+  //  | guardian/recipe(每日固定时段) | meal(每日3期) | facility(每12h)
   // 默认开关：与日常强相关且安全的默认开，付费/风险操作默认关
   const MODULE_DEFS = [
     // —— 面板主模块 ——
@@ -3192,9 +3196,9 @@
     { id: 'seasonEvening', module: 'season', target: '/xz/activity_season', nav: '>>夏日签到活动<<', slot: '18:30', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 10000, optional: true },
     { id: 'eggEvening', module: 'egg', target: '/xz/activity_egg', nav: '>>小镇扭蛋活动<<', slot: '18:30', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 30000, optional: true },
 
-    // 24h 独立硬定时（严格从上次跑完算起 24h）
-    { id: 'guardian', module: 'guardian', target: '/xz/guardian', nav: '神殿', route: [{ text: '神殿', href: '/xz/temple' }, { text: '挑战守护者', href: '/xz/guardian' }], slot: '24h', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 10000 },
-    { id: 'recipe', module: 'recipe', target: '/xz/cookbook', nav: '食谱', route: [{ text: '食谱', href: '/xz/cookbook' }, { text: '可升级', hrefPattern: '^/xz/cookbook_\\d+_3_1$' }], slot: '24h', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 30000 },
+    // 每日固定任务：随机延迟只在当天固定基准后增加，错过则当天补跑。
+    { id: 'guardian', module: 'guardian', target: '/xz/guardian', nav: '神殿', route: [{ text: '神殿', href: '/xz/temple' }, { text: '挑战守护者', href: '/xz/guardian' }], slot: '6:05', jitterMin: 0, jitterMax: 10, runOnce: true, runMs: 10000 },
+    { id: 'recipe', module: 'recipe', target: '/xz/cookbook', nav: '食谱', route: [{ text: '食谱', href: '/xz/cookbook' }, { text: '可升级', hrefPattern: '^/xz/cookbook_\\d+_3_1$' }], slot: '8:10', jitterMin: 0, jitterMax: 10, runOnce: true, runMs: 30000 },
   ];
 
   // 任务频次参考表（已迁移到 DYNAMIC_SCHEDULE，此处仅注释保留）
@@ -4379,6 +4383,12 @@
       Utils.gset('sched_dailyLuckHourly_lastRun', 0);
       Utils.gset('sched_dailyLuckHourly_nextAt', 0);
       Utils.gset('v361_luck_fresh_verify_migrated', true);
+    }
+    // v3.65：守护者/食谱由“完成后24h”改为每日固定时段；保留lastRun防止当天重复，只清旧nextAt重算。
+    if (!Utils.gget('v365_guardian_recipe_daily_migrated', false)) {
+      Utils.gset('sched_guardian_nextAt', 0);
+      Utils.gset('sched_recipe_nextAt', 0);
+      Utils.gset('v365_guardian_recipe_daily_migrated', true);
     }
     // 先填充全部nextRunAt，再创建/显示面板；否则调度列表晚到会推动右侧按钮位置。
     if (Scheduler.isOn()) {
