@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.69
+// @name         梦想小镇日常一体化 v3.70
 // @namespace    http://tampermonkey.net/
-// @version      3.69
+// @version      3.70
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋/成就
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,12 @@
 // ==/UserScript==
 
 /*
+ * v3.70 变更（2026-07-19 日常分时与状态机修复）
+ * - 好友每日项目改为午饭完成后、食材合成前执行；酒吧每日项目改为10:05后随机延迟0-3分钟
+ * - 猜酒杯在最后一次中奖达到目标时仍优先点击真实领奖/停止按钮，再结束本轮
+ * - 好友翻柜按“好友+柜子”去重，不再把相同柜子换楼层当新动作；楼层跳转只服务蟑螂图标
+ * - 设施设置页识别本轮已使用状态，商店按保存的明确目标页返回，避免广播商店偶发循环
+ *
  * v3.69 变更（2026-07-19 成就领取）
  * - 新增默认开启的成就领取：只点击红色可领取卡片中的真实“领取”按钮，并按“当前页 → 二级星号 → 一级星号”顺序扫完
  * - 每日09:10后随机延迟0-40分钟执行一次，加入自动驾驶最后一步和面板单项运行
@@ -332,7 +338,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.69';
+  const SCRIPT_VERSION = '3.70';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -694,7 +700,7 @@
           </div>
         </div>
         <details open>
-          <summary>每日项目（早饭后执行）<span class="summary-note">按服务器06:00重置；次数按成功动作记账；搬家不执行</span></summary>
+          <summary>每日项目（分时执行）<span class="summary-note">06:00重置；酒吧10:05；好友午饭后；搬家不执行</span></summary>
           <div id="dxzxx-project-rows"></div>
         </details>
         <details open id="dxzxx-module-switches">
@@ -1195,6 +1201,9 @@
         Utils.gset(this.STATE_KEY, state);
         Utils.log('设施: 开始本轮安装/续期及三项库存检查');
       }
+      state.renewed ||= [];
+      state.checked ||= [];
+      state.purchases ||= {};
       return state;
     },
 
@@ -1228,13 +1237,18 @@
 
     async returnFromStore(state, target) {
       const returnPath = state.returnPath || '/xz/restaurant_facility';
+      const allowedReturnPaths = ['/xz/restaurant_facility', ...this.TARGETS.map(t => t.setHref)];
+      if (!allowedReturnPaths.includes(returnPath)) {
+        return this.failClosed(state, `${target.name} 商店返回目标 ${returnPath} 非法`);
+      }
       state.currentPropId = null;
       state.returnPath = null;
       state.inventoryCheck = false;
       this.saveState(state);
       Utils.log(`设施: ${target.name} 商店检查完成，返回 ${returnPath}`);
       await Utils.sleep(Utils.randMs(1, 2));
-      history.back();
+      // 商店购买会在同一路径刷新，history.back() 的落点不稳定；使用本轮进入商店前保存的明确目标。
+      location.assign(returnPath);
       return false;
     },
 
@@ -1291,6 +1305,11 @@
             return setRow && setRow.textContent.includes(t.name) && setRow.textContent.includes('未设置');
           });
           if (setLink) {
+            // “使用”点击前已经记账；服务器若仍返回旧概览，不可再次进入设置/购买循环。
+            if (state.renewed.includes(t.propId)) {
+              Utils.warn(`设施: ${t.name} 本轮已执行设置，但概览仍显示未设置；本轮不重复使用`);
+              continue;
+            }
             state.currentPropId = t.propId;
             this.saveState(state);
             await Utils.sleep(Utils.randMs(1, 2));
@@ -1345,6 +1364,16 @@
         if (!target) {
           Utils.log(`设施: ${path} 非目标，跳过`);
           return true;
+        }
+        // setFacilityProp有时仍停在设置页。点击前已把propId写入renewed，命中时直接回概览，
+        // 不能因使用后库存下降再次进入同一宣传广播商店。
+        if (state.renewed.includes(target.propId)) {
+          const overview = document.querySelector('a[href="/xz/restaurant_facility"]');
+          Utils.log(`设施: ${target.name} 本轮已使用，离开残留设置页`);
+          await Utils.sleep(Utils.randMs(1, 2));
+          if (overview) Utils.click(overview);
+          else location.assign('/xz/restaurant_facility');
+          return false;
         }
         // 找包含 setupText 的 p 行
         const itemRow = Array.from(document.querySelectorAll('p')).find(p =>
@@ -2724,7 +2753,10 @@
       for (const [type, button] of actions) {
         const signature = button ? (type === 'like'
           ? `like:${uid}`
-          : `${type}:${uid}:${floor}:${button.getAttribute('onclick') || button.textContent.trim()}`) : '';
+          : type === 'dig'
+            // 同一好友各楼层重复显示完全相同的柜子按钮；柜子身份与楼层无关。
+            ? `dig:${uid}:${button.getAttribute('onclick') || button.textContent.trim()}`
+            : `roach:${uid}:${floor}:${button.getAttribute('onclick') || button.textContent.trim()}`) : '';
         if (button && !state.tried.includes(signature) && DailyProjectState.remaining(type, state) > 0) {
           state.pending = { type, uid, floor, signature };
           DailyProjectState.save('friend', state);
@@ -2735,17 +2767,11 @@
       }
 
       const floorLinks = Array.from(document.querySelectorAll(`a[href^="/xz/restaurant_${uid}_"]`));
-      const nextFloor = floorLinks.find(a => {
-        const m = (a.getAttribute('href') || '').match(/_(\d+)$/);
-        return m && +m[1] === floor + 1;
-      });
       const markedRoachFloor = floorLinks.find(a =>
         a.nextElementSibling?.matches?.('img[src="/readImg/xz_cockroach"]')
       );
-      // 翻柜仍需逐层；只剩蟑螂时直接跳到图标标记楼层，不再1→5盲扫。
-      const floorToVisit = DailyProjectState.remaining('dig', state) > 0
-        ? nextFloor
-        : (DailyProjectState.remaining('roach', state) > 0 ? markedRoachFloor : null);
+      // 翻柜按钮在每层重复，不换楼；只有蟑螂任务才进入带真实图标的楼层。
+      const floorToVisit = DailyProjectState.remaining('roach', state) > 0 ? markedRoachFloor : null;
       if (floorToVisit) {
         await Utils.sleep(Utils.randMs(1, 2));
         Utils.click(floorToVisit);
@@ -2898,6 +2924,17 @@
         state.pending = null;
         DailyProjectState.save('bar', state);
       }
+
+      // 最后一猜若中奖，pending确认后remaining会立刻归零；领奖必须先于整轮完成判断。
+      if (location.pathname === '/xz/cup') {
+        const reward = Array.from(document.querySelectorAll("a[onclick^='stopCupGuessing']"))[0];
+        if (reward) {
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(reward);
+          Utils.log('每日酒吧: 已点击猜酒杯真实领奖/停止按钮');
+          return false;
+        }
+      }
       if (['fist', 'cup', 'number'].every(id => DailyProjectState.remaining(id, state) <= 0)) return true;
 
       const go = async (href) => {
@@ -2945,13 +2982,7 @@
       }
 
       if (location.pathname === '/xz/cup') {
-        // 第一轮猜中后页面会诱导用3张券继续；日常只需次数，先领奖退出再开新的一局。
-        const stop = Array.from(document.querySelectorAll("a[onclick^='stopCupGuessing']"))[0];
-        if (stop) {
-          await Utils.sleep(Utils.randMs(1, 2));
-          Utils.click(stop);
-          return false;
-        }
+        // 中奖页的领奖/停止按钮已在完成判断前统一处理；这里仅开始/继续未完成次数。
         const buttons = Array.from(document.querySelectorAll("a[onclick^='cupGuessing']"));
         if (DailyProjectState.remaining('cup', state) > 0 && buttons.length > 0) {
           state.pending = 'cup';
@@ -3430,11 +3461,10 @@
     { id: 'foodCoupon', module: 'foodCoupon', target: '/xz/warehouse', nav: '仓库', slot: '7:30', jitterMin: 0, jitterMax: 15, runOnce: true, runMs: 30000 },
     { id: 'bag',     module: 'bag',     target: '/xz/warehouse_2_0',   nav: '仓库', route: [{ text: '仓库', href: '/xz/warehouse' }, { text: '礼包', href: '/xz/warehouse_2_0' }], slot: '7:30', jitterMin: 0, jitterMax: 15, runOnce: true, runMs: 8000 },
 
-    // 早饭后每日项目。资源项目用独立面板开关/次数控制，搬家不纳入。
+    // 分时每日项目。好友改为午饭后链式执行；酒吧单独放到10:05；搬家不纳入。
     { id: 'vitalityProbe', module: 'vitality', target: '/xz/restaurant_vitality', nav: '今日活跃', slot: '7:40', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 5000 },
-    { id: 'dailyFriend', module: 'dailyFriend', target: '/xz/friend', nav: '好友', route: [{ text: '好友', href: '/xz/friend' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 180000 },
     { id: 'dailyNpc', module: 'dailyNpc', target: '/xz/god', nav: '食神', route: [{ text: '食神', href: '/xz/god' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 45000 },
-    { id: 'dailyBar', module: 'dailyBar', target: '/xz/bar', nav: '广场', route: [{ text: '广场', href: '/xz/square' }, { text: '酒吧', href: '/xz/bar' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 180000 },
+    { id: 'dailyBar', module: 'dailyBar', target: '/xz/bar', nav: '广场', route: [{ text: '广场', href: '/xz/square' }, { text: '酒吧', href: '/xz/bar' }], slot: '10:05', jitterMin: 0, jitterMax: 3, runOnce: true, runMs: 180000 },
     { id: 'extraWish', module: 'extraWish', target: '/xz/wish', nav: '许愿', slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 60000 },
 
     // 早饭项目完成后领奖；晚饭后只复查领奖。临时活动入口消失时 optional 跳过。
@@ -3551,6 +3581,17 @@
         tomorrow.setDate(tomorrow.getDate() + 1);
         tomorrow.setHours(7, 0, 0, 0);
         return tomorrow.getTime() + Math.floor(Math.random() * 3 * 3600000);
+      },
+    },
+
+    // 好友每日项目：只跟随午饭窗口完成；完成后再进入食材合成。
+    {
+      id: 'dailyFriendAfterLunch', module: 'dailyFriend', target: '/xz/friend', nav: '好友', route: [{ text: '好友', href: '/xz/friend' }], runMs: 180000, chainedOnly: true,
+      computeNext() {
+        const nowMs = Utils.getServerTime().getTime();
+        const lunchLast = Utils.gget('sched_energy_lunch_lastRun', 0);
+        const friendLast = Utils.gget('sched_dailyFriendAfterLunch_lastRun', 0);
+        return lunchLast > friendLast ? Math.max(lunchLast, nowMs) : 0;
       },
     },
 
@@ -4083,6 +4124,7 @@
       Utils.gset(PHASE_KEY, null);
 
       // 吃饭模块：fire 后根据当前小时 mark 对应窗口（避免同日重入同一窗口）
+      let energyWindow = null;
       if (phase.id === 'energy') {
         const now = Utils.getServerTime();
         const h = now.getHours();
@@ -4090,7 +4132,9 @@
         for (let i = 0; i < windows.length; i++) {
           const [sH, eH] = windows[i];
           if (h >= sH && h < eH) {
+            energyWindow = i;
             Utils.gset('sched_energy_lastWindow', i);
+            if (i === 1) Utils.gset('sched_energy_lunch_lastRun', completedAt);
             Utils.log(`调度器: energy mark 窗口 ${i} [${sH}-${eH}]`);
             break;
           }
@@ -4105,13 +4149,29 @@
 
       if (this.isOn()) {
         this.computeAll();
-        // 每次早/午/晚饭完成后立即进入橱柜，只执行一次首个1级食材的全部合成。
-        if (phase.id === 'energy' && isEnabled('foodCompound')) {
+        // 午饭后先执行耗时的好友项目；项目完成后再接食材合成。
+        if (phase.id === 'energy' && energyWindow === 1 && isEnabled('dailyFriend')) {
+          const friendEntry = ALL_ENTRIES().find(e => e.id === 'dailyFriendAfterLunch');
+          if (friendEntry) {
+            friendEntry.nextRunAt = completedAt;
+            Utils.gset('sched_dailyFriendAfterLunch_nextAt', completedAt);
+            Utils.log('调度器: 午饭后先执行好友每日项目，完成后再合成');
+            void this.fireToTarget(friendEntry);
+            return;
+          }
+        }
+        // 早/晚饭直接合成；午饭则等待好友项目收尾后再合成。
+        const energyLast = Utils.gget('sched_energy_lastRun', 0);
+        const compoundLast = Utils.gget('sched_foodCompoundAfterEnergy_lastRun', 0);
+        const compoundStillPending = phase.id === 'energy' || energyLast > compoundLast;
+        if ((phase.id === 'energy' || phase.id === 'dailyFriendAfterLunch') && compoundStillPending && isEnabled('foodCompound')) {
           const compoundEntry = ALL_ENTRIES().find(e => e.id === 'foodCompoundAfterEnergy');
           if (compoundEntry) {
             compoundEntry.nextRunAt = completedAt;
             Utils.gset('sched_foodCompoundAfterEnergy_nextAt', completedAt);
-            Utils.log('调度器: 饭后立即执行一次食材全部合成');
+            Utils.log(phase.id === 'dailyFriendAfterLunch'
+              ? '调度器: 好友每日项目完成，开始午饭后食材合成'
+              : '调度器: 饭后立即执行一次食材全部合成');
             void this.fireToTarget(compoundEntry);
             return;
           }
@@ -4647,6 +4707,17 @@
       Utils.gset('sched_guardian_lastRun', 0);
       Utils.gset('sched_guardian_nextAt', 0);
       Utils.gset('v366_guardian_timeout_retry_migrated', true);
+    }
+    // v3.70：好友改为午饭链式任务、酒吧改时段；同时清理可能处于旧广播商店循环的设施轮次。
+    if (!Utils.gget('v370_daily_timing_facility_migrated', false)) {
+      Utils.gset('sched_dailyFriend_nextAt', 0);
+      Utils.gset('sched_dailyFriendAfterLunch_nextAt', 0);
+      Utils.gset('sched_dailyBar_nextAt', 0);
+      const lastWindow = Utils.gget('sched_energy_lastWindow', null);
+      const energyLast = Utils.gget('sched_energy_lastRun', 0);
+      if (lastWindow === 1 && energyLast > 0) Utils.gset('sched_energy_lunch_lastRun', energyLast);
+      Utils.gset('facility_cycle_state', null);
+      Utils.gset('v370_daily_timing_facility_migrated', true);
     }
     // 先填充全部nextRunAt，再创建/显示面板；否则调度列表晚到会推动右侧按钮位置。
     if (Scheduler.isOn()) {
