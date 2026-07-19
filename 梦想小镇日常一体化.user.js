@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.70
+// @name         梦想小镇日常一体化 v3.71
 // @namespace    http://tampermonkey.net/
-// @version      3.70
+// @version      3.71
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋/成就
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,9 @@
 // ==/UserScript==
 
 /*
+ * v3.71 变更（2026-07-19 手动浏览隔离）
+ * - 免费宝箱模块增加调度门禁，普通手动进入酒吧时不再被自动跳转到开宝箱页
+ *
  * v3.70 变更（2026-07-19 日常分时与状态机修复）
  * - 好友每日项目改为午饭完成后、食材合成前执行；酒吧每日项目改为10:05后随机延迟0-3分钟
  * - 猜酒杯在最后一次中奖达到目标时仍优先点击真实领奖/停止按钮，再结束本轮
@@ -338,7 +341,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.70';
+  const SCRIPT_VERSION = '3.71';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -2030,6 +2033,7 @@
   MOD.box = {
     match: (p) => p === '/xz/box' || p === '/xz/bar',
     schedule: 'daily',
+    requiresScheduled: true,
     async run() {
       // /xz/bar 是中转页：尝试点 "开宝箱" 跳到 /xz/box 再处理
       if (location.pathname === '/xz/bar') {

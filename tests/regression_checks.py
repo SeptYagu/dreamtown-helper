@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.70 metadata and shared panel version", "// @version      3.70" in text and "const SCRIPT_VERSION = '3.70';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.71 metadata and shared panel version", "// @version      3.71" in text and "const SCRIPT_VERSION = '3.71';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -32,6 +32,10 @@ require("panel action buttons use two columns", 'class="panel-actions"' in text 
 require("global stop button is permanent and reserves its row", "⏹ 停止当前操作</button>" in text and "#dxzxx-stop{grid-column:1/-1;}" in text and "dxzxx-stop\" style=\"background:#f44;color:#fff;display:none" not in text)
 require("autopilot refresh never inserts or removes global stop", "stopBtn.style.display" not in text)
 require("global stop is mouse only", "addEventListener('keydown'" not in text and "e.key === 'Escape'" not in text and "（Esc）" not in text)
+box_start = text.index("  MOD.box = {")
+box_end = text.index("\n  // -----", box_start + 1)
+box_run = text[box_start:box_end]
+require("box only takes over bar during an active box run", "requiresScheduled: true" in box_run and "p === '/xz/box' || p === '/xz/bar'" in box_run)
 require("all remaining non-main feature rows expose action run buttons", text.count('data-run-action="restaurant_') == 3 and 'data-run-action="project_${p.id}"' in text)
 require("duplicate recipe learning control is removed", 'data-run-action="recipe_learn"' not in text and 'data-sub="recipe_learn"' not in text and 'recipe_learn:' not in text)
 require("all action run buttons use scoped autopilot", "const ACTION_RUN_DEFS = {" in text and "startAction(actionId)" in text and "actionScope: actionId" in text and "actionNavSteps: def.navSteps" in text)
