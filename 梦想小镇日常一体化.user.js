@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.67
+// @name         梦想小镇日常一体化 v3.68
 // @namespace    http://tampermonkey.net/
-// @version      3.67
+// @version      3.68
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,9 @@
 // ==/UserScript==
 
 /*
+ * v3.68 变更（2026-07-19 守护者补货返回）
+ * - 补货验证成功后固定进入真实守护者页，不再依赖物品页“返回前页”的浏览历史，避免补货后回首页却未继续战斗
+ *
  * v3.67 变更（2026-07-19 守护者补货）
  * - 爆裂飞弹库存低于200时购买300个，并保留购买后返回战斗、继续打完本轮的逻辑
  *
@@ -324,7 +327,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.67';
+  const SCRIPT_VERSION = '3.68';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -2461,14 +2464,11 @@
     },
 
     async returnFromStore(have, reason) {
-      const back = document.querySelector('a[onclick="backPage()"]') || Utils.findByText('a', '返回前页');
-      if (!back) {
-        Utils.warn(`守护者: ${reason}，但找不到返回前页按钮`);
-        return true;
-      }
       await Utils.sleep(Utils.randMs(1, 2));
-      Utils.click(back);
-      Utils.log(`守护者: ${reason}（库存 ${have}），返回继续攻击`);
+      // 物品页购买可能新增/替换同路径历史记录，“返回前页”不能保证落回守护者。
+      // 固定进入真实守护者地址，让AutoPilot/Scheduler在同一guardian phase内继续攻击。
+      Utils.log(`守护者: ${reason}（库存 ${have}），进入守护者页继续攻击`);
+      location.assign('/xz/guardian');
       return false;
     },
 
