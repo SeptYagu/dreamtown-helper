@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.68
+// @name         梦想小镇日常一体化 v3.69
 // @namespace    http://tampermonkey.net/
-// @version      3.68
-// @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋
+// @version      3.69
+// @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋/成就
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
 // @updateURL    https://raw.githubusercontent.com/SeptYagu/dreamtown-helper/main/%E6%A2%A6%E6%83%B3%E5%B0%8F%E9%95%87%E6%97%A5%E5%B8%B8%E4%B8%80%E4%BD%93%E5%8C%96.meta.js
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.69 变更（2026-07-19 成就领取）
+ * - 新增默认开启的成就领取：只点击红色可领取卡片中的真实“领取”按钮，并按“当前页 → 二级星号 → 一级星号”顺序扫完
+ * - 每日09:10后随机延迟0-40分钟执行一次，加入自动驾驶最后一步和面板单项运行
+ * - 增加15分钟/100次上限、同一成就失败防重试，以及页面结构异常时的一次成就总览复核
+ *
  * v3.68 变更（2026-07-19 守护者补货返回）
  * - 补货验证成功后固定进入真实守护者页，不再依赖物品页“返回前页”的浏览历史，避免补货后回首页却未继续战斗
  *
@@ -327,7 +332,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.68';
+  const SCRIPT_VERSION = '3.69';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -465,6 +470,7 @@
     { id: 'dailyLuck',   label: '每日餐厅沾光', default: true, schedule: 'daily-project', hidden: true },
     { id: 'extraWish',   label: '额外许愿项目', default: true, schedule: 'daily-project', hidden: true },
     { id: 'vitality',    label: '今日活跃领奖', default: true, schedule: 'reward-twice' },
+    { id: 'achievement', label: '成就领取', default: true, schedule: 'daily' },
     // —— 付费模块：在 PLAN 内，但默认关闭 ——
     { id: 'market',     label: '食材采购(整点)', default: false, schedule: 'hourly' },  // 花钱
   ];
@@ -3199,6 +3205,207 @@
     },
   };
 
+  // ----- 成就领取（每日 09:10 + 0-40min）-----
+  // 页面有三级导航：一级分组、二级分类、领取状态。星号只负责提示范围，
+  // 实际领取必须同时满足“红色卡片 + 真实领取链接”，绝不构造领奖调用。
+  MOD.achievement = {
+    match: (p) => p === '/xz/achievement' || /^\/xz\/achievement_\d+_2$/.test(p),
+    schedule: 'daily',
+    requiresScheduled: true,
+    STATE_KEY: 'achievement_claim_state',
+    MAX_CLAIMS: 100,
+    MAX_RUN_MS: 15 * 60000,
+    maxPhaseAgeMs: 15 * 60000,
+
+    contextToken() {
+      const phase = Utils.gget('sched_phase', null);
+      if (phase?.module === 'achievement' && ['navigating', 'running'].includes(phase.state)) {
+        return `scheduler:${phase.startedAt || phase.firedAt || 0}`;
+      }
+      const autopilot = Utils.gget('autopilot_state', null);
+      if (autopilot?.enabled) return `autopilot:${autopilot.startedAt || 0}`;
+      return null;
+    },
+
+    loadState() {
+      const token = this.contextToken();
+      if (!token) return null;
+      let state = Utils.gget(this.STATE_KEY, null);
+      if (!state || state.token !== token || !state.startedAt) {
+        state = {
+          token,
+          startedAt: Date.now(),
+          claims: 0,
+          clicks: 0,
+          blocked: [],
+          pending: null,
+          rootFallbackUsed: false,
+        };
+        Utils.gset(this.STATE_KEY, state);
+        Utils.log('成就: 开始新一轮真实页面扫描');
+      }
+      return state;
+    },
+
+    saveState(state) {
+      Utils.gset(this.STATE_KEY, state);
+    },
+
+    finish(state, message, color = '#4CAF50') {
+      Utils.gset(this.STATE_KEY, null);
+      Utils.log(`成就: ${message}（本轮确认领取 ${state?.claims || 0} 项）`);
+      Utils.showStatus('成就', message, color);
+      return true;
+    },
+
+    claimLinks() {
+      return Array.from(document.querySelectorAll('div.gen_background_red a[onclick]')).filter(a => {
+        const onclick = (a.getAttribute('onclick') || '').replace(/\s+/g, '');
+        return a.textContent.trim() === '领取' && /^getAchievement\(\d+,\d+,2\);?$/.test(onclick);
+      });
+    },
+
+    signature(link) {
+      return (link?.getAttribute('onclick') || '').replace(/\s+/g, '').replace(/;$/, '');
+    },
+
+    navRows() {
+      return Array.from(document.querySelectorAll('p')).filter(p =>
+        p.querySelector('a[href^="/xz/achievement_"]')
+      );
+    },
+
+    topRow() {
+      const rows = this.navRows();
+      if (location.pathname === '/xz/achievement') {
+        return rows.find(row => Array.from(row.querySelectorAll('a')).some(a =>
+          /^\/xz\/achievement_\d+_2$/.test(a.getAttribute('href') || '') && a.textContent.trim().endsWith('*')
+        )) || null;
+      }
+      return rows.find(row => row.querySelector('a[href="/xz/achievement_100_0"]')) || null;
+    },
+
+    starredLink(row) {
+      if (!row) return null;
+      return Array.from(row.querySelectorAll('a')).find(a =>
+        /^\/xz\/achievement_\d+_2$/.test(a.getAttribute('href') || '') &&
+        a.textContent.trim().endsWith('*')
+      ) || null;
+    },
+
+    secondaryStarLink() {
+      if (location.pathname === '/xz/achievement') return null;
+      const top = this.topRow();
+      return this.navRows()
+        .filter(row => row !== top)
+        .map(row => this.starredLink(row))
+        .find(Boolean) || null;
+    },
+
+    topStarLink() {
+      return this.starredLink(this.topRow());
+    },
+
+    hasStarMarker() {
+      return this.navRows().some(row => /\*/.test(row.textContent || ''));
+    },
+
+    rootLink() {
+      return Array.from(document.querySelectorAll('a[href="/xz/achievement"]')).find(a =>
+        a.textContent.trim() === '成就'
+      ) || document.querySelector('a[href="/xz/achievement"]');
+    },
+
+    async clickNavigation(link, label) {
+      await Utils.sleep(Utils.randMs(1, 2));
+      if (!Utils.click(link)) return false;
+      Utils.log(`成就: ${label} → ${link.getAttribute('href')}`);
+      return true;
+    },
+
+    async run() {
+      const state = this.loadState();
+      if (!state) {
+        Utils.log('成就: 非调度/自动驾驶阶段，不接管手动浏览');
+        return true;
+      }
+      if (Date.now() - state.startedAt >= this.MAX_RUN_MS) {
+        return this.finish(state, '超过15分钟保护上限，本轮安全结束', '#f44');
+      }
+
+      const allClaims = this.claimLinks();
+      if (state.pending) {
+        const stillPresent = allClaims.some(link => this.signature(link) === state.pending.signature);
+        if (stillPresent && Date.now() - state.pending.clickedAt < 5000) {
+          Utils.log('成就: 上次领取点击仍在等待页面响应');
+          return false;
+        }
+        if (stillPresent) {
+          if (!state.blocked.includes(state.pending.signature)) state.blocked.push(state.pending.signature);
+          Utils.warn(`成就: ${state.pending.signature} 点击后仍存在，本轮不再重试该成就`);
+        } else {
+          state.claims += 1;
+          Utils.log(`成就: 已确认第 ${state.claims} 项领取成功`);
+        }
+        state.pending = null;
+        this.saveState(state);
+      }
+
+      if (state.clicks >= this.MAX_CLAIMS) {
+        return this.finish(state, '达到100次点击保护上限，本轮安全结束', '#f44');
+      }
+
+      const claim = this.claimLinks().find(link => !state.blocked.includes(this.signature(link)));
+      if (claim) {
+        const signature = this.signature(claim);
+        state.clicks += 1;
+        state.pending = { signature, clickedAt: Date.now(), path: location.pathname };
+        this.saveState(state); // 点击前记账，刷新或失败都不会无保护重试。
+        await Utils.sleep(Utils.randMs(1, 2));
+        if (!Utils.click(claim)) {
+          state.pending = null;
+          if (!state.blocked.includes(signature)) state.blocked.push(signature);
+          this.saveState(state);
+          return this.finish(state, '真实领取按钮点击失败，本轮安全结束', '#f44');
+        }
+        Utils.log(`成就: 点击红色卡片中的真实领取按钮 ${signature}`);
+        Utils.showStatus('成就', `正在领取第 ${state.claims + 1} 项…`, '#FF9800');
+        return false;
+      }
+
+      // 页面仍有领取按钮但都曾失败：不能误判为空，更不能反复点击。
+      if (this.claimLinks().length > 0) {
+        return this.finish(state, '存在领取后未消失的成就，已防重复并安全结束', '#f44');
+      }
+
+      // 当前页清空后，先走同一一级分组中的二级星号，再走其它一级星号。
+      const secondary = this.secondaryStarLink();
+      if (secondary) {
+        await this.clickNavigation(secondary, '进入下一个二级星号页');
+        return false;
+      }
+      const top = this.topStarLink();
+      if (top) {
+        await this.clickNavigation(top, '进入下一个一级星号页');
+        return false;
+      }
+
+      // 若页面还显示星号却没有可跟随的星号链接，只用真实“成就”链接回总览复核一次。
+      if (this.hasStarMarker() && location.pathname !== '/xz/achievement' && !state.rootFallbackUsed) {
+        const root = this.rootLink();
+        state.rootFallbackUsed = true;
+        this.saveState(state);
+        if (root) {
+          await this.clickNavigation(root, '页面结构异常，回成就总览复核一次');
+          return false;
+        }
+        return this.finish(state, '页面仍有星号但缺少成就总览链接，本轮安全结束', '#f44');
+      }
+
+      return this.finish(state, '全部星号页已检查完成');
+    },
+  };
+
   // ==================== 任务穷举表 ====================
   // 把所有日常任务穷举出来，调度器只做"算下一个最近 → 触发 → 算下一个"
   //
@@ -3241,6 +3448,7 @@
     // 每日固定任务：随机延迟只在当天固定基准后增加，错过则当天补跑。
     { id: 'guardian', module: 'guardian', target: '/xz/guardian', nav: '神殿', route: [{ text: '神殿', href: '/xz/temple' }, { text: '挑战守护者', href: '/xz/guardian' }], slot: '6:05', jitterMin: 0, jitterMax: 10, runOnce: true, runMs: 10000 },
     { id: 'recipe', module: 'recipe', target: '/xz/cookbook', nav: '食谱', route: [{ text: '食谱', href: '/xz/cookbook' }, { text: '可升级', hrefPattern: '^/xz/cookbook_\\d+_3_1$' }], slot: '8:10', jitterMin: 0, jitterMax: 10, runOnce: true, runMs: 30000 },
+    { id: 'achievement', module: 'achievement', target: '/xz/achievement', nav: '成就', route: [{ text: '成就', href: '/xz/achievement' }], slot: '9:10', jitterMin: 0, jitterMax: 40, runOnce: true, runMs: 15000 },
   ];
 
   // 任务频次参考表（已迁移到 DYNAMIC_SCHEDULE，此处仅注释保留）
@@ -3957,6 +4165,7 @@
       { module: 'season',     navSteps: [{ text: '>>夏日签到活动<<',    hrefMatch: '/xz/activity_season' }] },
       { module: 'egg',        navSteps: [{ text: '>>小镇扭蛋活动<<',    hrefMatch: '/xz/activity_egg' }] },
       { module: 'vitality',   navSteps: [{ text: '今日活跃',            hrefMatch: '/xz/restaurant_vitality' }] },
+      { module: 'achievement', navSteps: [{ text: '成就',               hrefMatch: '/xz/achievement' }] },
     ],
     stateKey: 'autopilot_state',
 

@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.68 metadata and shared panel version", "// @version      3.68" in text and "const SCRIPT_VERSION = '3.68';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.69 metadata and shared panel version", "// @version      3.69" in text and "const SCRIPT_VERSION = '3.69';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -147,6 +147,19 @@ guardian_end = text.index("  // ==================== 可配置每日项目", gua
 guardian_block = text[guardian_start:guardian_end]
 require("guardian ignores casual manual store browsing", "requiresScheduled: true" in guardian_block)
 require("egg action returns in-progress", "扭蛋: 已扭" in text and "return false;" in text)
+
+achievement_start = text.index("  MOD.achievement = {")
+achievement_end = text.index("  // ==================== 任务穷举表", achievement_start)
+achievement = text[achievement_start:achievement_end]
+require("achievement is default on and isolated from casual browsing", "{ id: 'achievement', label: '成就领取', default: true" in text and "requiresScheduled: true" in achievement and "非调度/自动驾驶阶段，不接管手动浏览" in achievement)
+require("achievement matches only root and unclaimed category pages", "p === '/xz/achievement'" in achievement and r"^\/xz\/achievement_\d+_2$" in achievement and "achievement_\\d+_[012]" not in achievement)
+require("achievement claims only real links inside red cards", "div.gen_background_red a[onclick]" in achievement and "a.textContent.trim() === '领取'" in achievement and r"^getAchievement\(\d+,\d+,2\);?$" in achievement)
+require("achievement records pending before clicking", achievement.index("state.pending = { signature") < achievement.index("Utils.click(claim)") and "点击前记账" in achievement)
+require("achievement verifies disappearance and blocks repeated failure", "stillPresent" in achievement and "state.claims += 1" in achievement and "state.blocked.push(state.pending.signature)" in achievement and "本轮不再重试该成就" in achievement)
+require("achievement prioritizes secondary star before top star", achievement.index("const secondary = this.secondaryStarLink()") < achievement.index("const top = this.topStarLink()"))
+require("achievement follows only real starred links", "a.textContent.trim().endsWith('*')" in achievement and r"^\/xz\/achievement_\d+_2$" in achievement and "Utils.click(link)" in achievement)
+require("achievement uses root only for one anomaly fallback", "rootFallbackUsed" in achievement and "页面结构异常，回成就总览复核一次" in achievement and "location.assign('/xz/achievement')" not in achievement)
+require("achievement has fifteen minute and one hundred click safeguards", "MAX_CLAIMS: 100" in achievement and "MAX_RUN_MS: 15 * 60000" in achievement and "maxPhaseAgeMs: 15 * 60000" in achievement)
 require("daily projects exclude moving", "DAILY_PROJECT_DEFS" in text and "project_move" not in text)
 require("daily project labels show vitality recommendations", "打蟑螂（推荐15次）" in text and "翻橱柜（推荐20次）" in text and "点赞/被赞（推荐5次）" in text)
 require("daily project counts persist on input and change", "addEventListener('input', saveProjectCount)" in text and "addEventListener('change', saveProjectCount)" in text)
@@ -302,13 +315,14 @@ require("autopilot mailbox is immediately after restaurant", restaurant_plan < m
 autopilot_plan = text[text.index("  const AutoPilot = {"):text.index("    stateKey: 'autopilot_state'")]
 autopilot_modules = re.findall(r"\{ module: '([^']+)'", autopilot_plan)
 require("autopilot moves restaurant to step 2 and mailbox to step 3", autopilot_modules[:4] == ['signIn', 'restaurant', 'mailbox', 'wish'])
-require("autopilot merges food god into NPC and includes luck in daily projects", len(autopilot_modules) == 21 and autopilot_modules[4:12] == ['box', 'foodCoupon', 'market', 'dailyNpc', 'dailyFriend', 'dailyBar', 'dailyLuck', 'extraWish'] and 'god' not in autopilot_modules)
+require("autopilot merges food god into NPC and includes luck in daily projects", len(autopilot_modules) == 22 and autopilot_modules[4:12] == ['box', 'foodCoupon', 'market', 'dailyNpc', 'dailyFriend', 'dailyBar', 'dailyLuck', 'extraWish'] and 'god' not in autopilot_modules)
 energy_index = autopilot_modules.index('energy')
 require("autopilot puts food compound immediately after energy", autopilot_modules[energy_index:energy_index + 2] == ['energy', 'foodCompound'])
-require("autopilot ends with two seasonal activities then vitality", autopilot_modules[-3:] == ['season', 'egg', 'vitality'])
+require("autopilot ends with seasonal activities, vitality, then achievement", autopilot_modules[-4:] == ['season', 'egg', 'vitality', 'achievement'])
 require("scheduler supports pattern navigation", "new RegExp(step.hrefPattern).test(href)" in text and "new RegExp(nav.hrefPattern).test(href)" in text)
 require("guardian uses daily 06:05 plus up to ten minutes", "id: 'guardian'" in daily and "slot: '6:05', jitterMin: 0, jitterMax: 10" in daily)
 require("recipe uses daily 08:10 plus up to ten minutes", "id: 'recipe'" in daily and "slot: '8:10', jitterMin: 0, jitterMax: 10" in daily)
+require("achievement uses daily 09:10 plus up to forty minutes", "id: 'achievement', module: 'achievement'" in daily and "slot: '9:10', jitterMin: 0, jitterMax: 40" in daily and "runOnce: true" in daily)
 require("guardian and recipe no longer use drifting 24h slots", "slot: '24h'" not in daily)
 require("guardian recipe daily migration exists", "v365_guardian_recipe_daily_migrated" in text and "sched_guardian_nextAt', 0" in text and "sched_recipe_nextAt', 0" in text)
 require("scheduler recomputes all tasks after return", "this.computeAll();\n        this.scheduleNext();" in text)
