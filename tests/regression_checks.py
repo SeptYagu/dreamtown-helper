@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.77 metadata and shared panel version", "// @version      3.77" in text and "const SCRIPT_VERSION = '3.77';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.78 metadata and shared panel version", "// @version      3.78" in text and "const SCRIPT_VERSION = '3.78';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)

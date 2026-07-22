@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.77
+// @name         梦想小镇日常一体化 v3.78
 // @namespace    http://tampermonkey.net/
-// @version      3.77
+// @version      3.78
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材预定/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋/成就
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,9 @@
 // ==/UserScript==
 
 /*
+ * v3.78 变更（2026-07-22 本地跟踪发布验证）
+ * - 不改动功能逻辑；验证通过固定本地发布文件自动更新Tampermonkey，同时继续提交并推送GitHub
+ *
  * v3.77 变更（2026-07-22 全局路由互斥）
  * - Router增加单页互斥，阻止初始化与页面恢复看门狗并发执行同一动作、重复记账或完成后拉回旧页面
  * - 升级时一次性重开当天14点服务器校准与酒吧补跑，用服务器43/45纠正旧并发造成的虚高后补齐
@@ -370,7 +373,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.77';
+  const SCRIPT_VERSION = '3.78';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
