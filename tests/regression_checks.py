@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.76 metadata and shared panel version", "// @version      3.76" in text and "const SCRIPT_VERSION = '3.76';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.77 metadata and shared panel version", "// @version      3.77" in text and "const SCRIPT_VERSION = '3.77';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -176,7 +176,7 @@ require("daily project counts persist on input and change", "addEventListener('i
 require("daily projects use 6am game day", "date.getTime() - 6 * 3600000" in text)
 require("daily friend actions are configurable", "['like', 'dig', 'roach'].some" in text and "DailyProjectState.remaining(type, state)" in text)
 require("daily bar actions are configurable", "DailyProjectState.remaining('fist'" in text and "DailyProjectState.remaining('cup'" in text and "DailyProjectState.remaining('number'" in text)
-require("scheduled project scopes isolate catch-up actions", "scheduledPhase.projectScope" in text and "if (!scheduledScope.includes(id)) return 0;" in text and "projectScope: Array.isArray(entry.projectScope) ? entry.projectScope : null" in text)
+require("scheduled project scopes isolate catch-up actions", "scheduledPhase.projectScope" in text and "!scheduledScope.includes(id)) return 0;" in text and "projectScope: Array.isArray(entry.projectScope) ? entry.projectScope : null" in text)
 require("daily bar has three conditional catch-up rounds", all(f"id: 'dailyBarCatchup{i}'" in daily for i in range(1, 4)) and "slot: '14:12'" in daily and "slot: '18:12'" in daily and "slot: '22:12'" in daily and daily.count("projectScope: ['fist', 'cup']") == 3)
 require("daily friends have three comprehensive catch-up rounds", all(f"id: 'dailyFriendCatchup{i}'" in daily for i in range(1, 4)) and "slot: '16:12'" in daily and "slot: '20:12'" in daily and "slot: '23:12'" in daily and daily.count("projectScope: ['like', 'dig', 'roach']") == 3)
 require("completed daily targets remove conditional scheduler entries", "entryConditionMet" in text and "entryIsEnabled" in text and "if (!entryConditionMet(e))" in text and "Utils.gset(`sched_${e.id}_nextAt`, 0);" in text)
@@ -189,6 +189,8 @@ require("vitality sync uses exact server friend progress", "syncDailyProgressFro
 require("vitality reconciles bar total without preserving false local completion", "bar.serverCombined = combined;" in text and "combined - fist - cup" in text and "Math.max(bar.counts.fist" not in text)
 require("three read-only progress audits precede catch-up rounds", all(f"id: 'dailyProgressAudit{i}'" in daily for i in range(1, 4)) and "slot: '14:00'" in daily and "slot: '18:00'" in daily and "slot: '22:00'" in daily and "只读检查完成，不领取奖励" in text)
 require("progress audit is isolated from vitality reward claims", "MOD.dailyProgress =" in text and "requiresScheduled: true" in text[text.index("MOD.dailyProgress ="):text.index("// ----- 13.", text.index("MOD.dailyProgress ="))])
+require("router globally rejects concurrent page executions", "if (this.busy)" in text and "跳过并发触发" in text and "return await this.runUnlocked();" in text and "finally" in text and "this.busy = false;" in text)
+require("v377 reopens current-day audit and bar catch-up once", "v377_router_mutex_repair" in text and "['dailyProgressAudit1', 'dailyBarCatchup1']" in text and "Utils.gset(`sched_${id}_lastRun`, 0);" in text and "Utils.gset(`sched_${id}_nextAt`, 0);" in text)
 require("daily NPC project is one complete round", "拜访NPC（推荐1轮）" in text and "['god', 'garden', 'deer', 'annie', 'wenjie'].every" in text and "本轮完成 1/1" in text)
 require("daily NPC round includes all five visits", "visitHere('god', '食神')" in text and "visitHere('garden', '菜园姐')" in text and "visitHere('deer', '阿鹿')" in text and "visitHere('annie', '安妮')" in text and "visitHere('wenjie', '雯姐')" in text)
 require("daily NPC association route returns through square", "goRequired('/xz/association')" in text and "location.pathname === '/xz/association'" in text and "goRequired('/xz/square')" in text and "!state.visited.includes('annie')" in text)

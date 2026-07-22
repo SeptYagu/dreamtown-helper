@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.76
+// @name         梦想小镇日常一体化 v3.77
 // @namespace    http://tampermonkey.net/
-// @version      3.76
+// @version      3.77
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材预定/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋/成就
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.77 变更（2026-07-22 全局路由互斥）
+ * - Router增加单页互斥，阻止初始化与页面恢复看门狗并发执行同一动作、重复记账或完成后拉回旧页面
+ * - 升级时一次性重开当天14点服务器校准与酒吧补跑，用服务器43/45纠正旧并发造成的虚高后补齐
+ *
  * v3.76 变更（2026-07-22 服务器进度校准）
  * - 今日活跃页的好友与酒吧次数改为服务器权威值，不再用Math.max保留旧版本虚高的本地计数
  * - 酒吧合计次数按已知猜杯进度优先保留、其余分配给猜拳，确保合计缺口会继续触发补跑
@@ -366,7 +370,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.76';
+  const SCRIPT_VERSION = '3.77';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -5247,6 +5251,20 @@
   // ==================== 路由 ====================
   const Router = {
     async run() {
+      if (this.busy) {
+        Utils.log(`路由: 当前页面已有执行实例，跳过并发触发 @ ${location.pathname}`);
+        return;
+      }
+      this.busy = true;
+      try {
+        return await this.runUnlocked();
+      } finally {
+        this.busy = false;
+      }
+    },
+
+    busy: false,
+    async runUnlocked() {
       if (Utils.gget('operation_stopped', false)) {
         Utils.log('路由: 总停止锁已启用，跳过所有自动动作');
         return;
@@ -5369,6 +5387,14 @@
       if (lastWindow === 1 && energyLast > 0) Utils.gset('sched_energy_lunch_lastRun', energyLast);
       Utils.gset('facility_cycle_state', null);
       Utils.gset('v370_daily_timing_facility_migrated', true);
+    }
+    // v3.77：旧并发路由可能把酒吧本地次数记高；升级后重开一次服务器校准及其后的补跑。
+    if (!Utils.gget('v377_router_mutex_repair', false)) {
+      for (const id of ['dailyProgressAudit1', 'dailyBarCatchup1']) {
+        Utils.gset(`sched_${id}_lastRun`, 0);
+        Utils.gset(`sched_${id}_nextAt`, 0);
+      }
+      Utils.gset('v377_router_mutex_repair', true);
     }
     // 先填充全部nextRunAt，再创建/显示面板；否则调度列表晚到会推动右侧按钮位置。
     if (Scheduler.isOn()) {
