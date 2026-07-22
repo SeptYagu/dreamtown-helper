@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.74
+// @name         梦想小镇日常一体化 v3.75
 // @namespace    http://tampermonkey.net/
-// @version      3.74
+// @version      3.75
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材预定/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋/成就
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,12 @@
 // ==/UserScript==
 
 /*
+ * v3.75 变更（2026-07-22 每日累计补跑）
+ * - 点赞与酒吧次数明确按服务器06:00重置的每日累计目标执行；单轮超时不再意味着当天没有后续机会
+ * - 酒吧保留10:05首轮并增加14:12/18:12/22:12 +0至8分钟补跑；好友午饭后主轮外增加16:12/20:12/23:12 +0至8分钟补跑
+ * - 补跑只在目标尚有缺口时进入时刻表；好友补跑同时推进点赞/翻柜/蟑螂，酒吧补跑只处理猜拳/猜杯
+ * - 好友与酒吧跨页寿命分别延长到20/15分钟；高次数自动驾驶按配置动态放宽迭代保护
+ *
  * v3.74 变更（2026-07-22 面板预定区压缩）
  * - 删除两个食材预定下拉上方重复的“预定位1/2”小字，缩短左栏高度
  * - 本页执行、全套运行、总停止三个全局按钮移到右栏调度器下方，利用空位并保持按钮固定排列
@@ -355,7 +361,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.74';
+  const SCRIPT_VERSION = '3.75';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -1038,7 +1044,7 @@
           html += `<div style="color:#4fe;">下次: <b>${next.id}</b> @ ${hh}:${mm} (${mins}min 后)</div>`;
         }
         // 列出所有启用模块的下次时间
-        const all = ALL_ENTRIES().filter(e => e.nextRunAt && isEnabled(e.module));
+        const all = ALL_ENTRIES().filter(e => e.nextRunAt && entryIsEnabled(e));
         all.sort((a, b) => a.nextRunAt - b.nextRunAt);
         const highlightedId = phase?.state === 'running' ? phase.id : next?.id;
         const highlightedAt = phase?.state === 'running' ? null : next?.at;
@@ -1057,7 +1063,7 @@
       } else {
         btn.textContent = '⏰ 启动调度器';
         btn.style.background = '#FF9800';
-        const enabled = ALL_ENTRIES().filter(e => isEnabled(e.module));
+        const enabled = ALL_ENTRIES().filter(e => entryIsEnabled(e));
         statusEl.innerHTML = `<div>⏸ 未启动（已配置 ${enabled.length} 项可调度任务）</div>`;
       }
     },
@@ -3025,13 +3031,15 @@
       const day = gameDayKey();
       const state = Utils.gget(`project_state_${key}`, null);
       if (!state || state.day !== day) {
-        const fresh = { day, counts: {}, pending: null, visited: [], tried: [], page: 1 };
+        const fresh = { day, counts: {}, pending: null, visited: [], tried: [], succeeded: [], page: 1 };
         Utils.gset(`project_state_${key}`, fresh);
         return fresh;
       }
       state.counts ||= {};
       state.visited ||= [];
       state.tried ||= [];
+      // 旧状态无法区分成功与失败签名；升级当天保守视作已成功，次日06:00后自动使用精确记录。
+      if (!Array.isArray(state.succeeded)) state.succeeded = [...state.tried];
       return state;
     },
     save(key, state) { Utils.gset(`project_state_${key}`, state); },
@@ -3054,15 +3062,38 @@
           : 0;
         return Math.max(0, target - completed);
       }
+      const scheduledPhase = !actionState?.enabled ? Utils.gget('sched_phase', null) : null;
+      const scheduledScope = ['navigating', 'running'].includes(scheduledPhase?.state)
+        ? scheduledPhase.projectScope
+        : null;
+      if (Array.isArray(scheduledScope) && scheduledScope.length > 0) {
+        if (!scheduledScope.includes(id)) return 0;
+        return projectEnabled(id) ? Math.max(0, projectTarget(id) - (state.counts[id] || 0)) : 0;
+      }
       return projectEnabled(id) ? Math.max(0, projectTarget(id) - (state.counts[id] || 0)) : 0;
     },
   };
+
+  const DAILY_PROJECT_STATE_KEYS = {
+    like: 'friend', dig: 'friend', roach: 'friend',
+    fist: 'bar', cup: 'bar', number: 'bar',
+    npc: 'npc', luck: 'luck', extraWish: 'wish',
+  };
+  const hasDailyProjectRemaining = (ids) => ids.some(id => {
+    if (!projectEnabled(id) || projectTarget(id) <= 0) return false;
+    const stateKey = DAILY_PROJECT_STATE_KEYS[id];
+    if (!stateKey) return false;
+    const state = DailyProjectState.load(stateKey);
+    return (state.counts[id] || 0) < projectTarget(id);
+  });
 
   // 好友项目：逐个好友、逐层扫描；只在页面明确返回成功时增加进度。
   MOD.dailyFriend = {
     match: (p) => /^\/xz\/friend(?:_0_\d+)?$/.test(p) || /^\/xz\/restaurant_\d+_\d+$/.test(p),
     schedule: 'daily-project',
     requiresScheduled: true,
+    // 高次数配置需要跨越大量好友页；总寿命仅防真正卡死，不再用3.5分钟截断正常遍历。
+    maxPhaseAgeMs: 20 * 60 * 1000,
     async run() {
       const state = DailyProjectState.load('friend');
       const text = document.body.textContent || '';
@@ -3073,6 +3104,7 @@
           : /打蟑螂成功|清除蟑螂成功|消灭蟑螂/.test(text);
         if (ok) {
           state.counts[type] = (state.counts[type] || 0) + 1;
+          if (signature && !state.succeeded.includes(signature)) state.succeeded.push(signature);
           recordScopedProjectSuccess(type);
           Utils.log(`每日好友: ${type} 成功 ${state.counts[type]}/${projectTarget(type)}`);
         } else {
@@ -3115,7 +3147,7 @@
           Utils.click(next);
           return false;
         }
-        Utils.warn('每日好友: 已扫描全部好友，未完成的项目留待明日/下轮');
+        Utils.warn('每日好友: 本轮已扫描全部好友；每日累计缺口保留，等待后续补跑或新候选');
         return true;
       }
 
@@ -3281,9 +3313,12 @@
     match: (p) => ['/xz/bar', '/xz/fist', '/xz/cup', '/xz/number'].includes(p),
     schedule: 'daily-project',
     requiresScheduled: true,
+    // 猜拳/猜杯每次都会刷新页面，高次数目标给足一轮正常完成时间。
+    maxPhaseAgeMs: 15 * 60 * 1000,
     async run() {
       const state = DailyProjectState.load('bar');
       const text = document.body.textContent || '';
+      let roundBlocked = false;
       // 清理 v3.32 可能遗留的旧雯姐 pending；NPC 现由独立模块负责。
       if (state.pending === 'wenjie') {
         state.pending = null;
@@ -3297,9 +3332,14 @@
           Utils.log(`每日酒吧: ${type} ${state.counts[type]}/${projectTarget(type)}`);
         } else {
           Utils.warn(`每日酒吧: ${type} 失败，本次不计数`);
+          roundBlocked = /礼券不足|无法参与/.test(text);
         }
         state.pending = null;
         DailyProjectState.save('bar', state);
+      }
+      if (roundBlocked) {
+        Utils.warn('每日酒吧: 本轮因礼券不足或暂时无法参与而结束，每日缺口保留给后续补跑');
+        return true;
       }
 
       // 最后一猜若中奖，pending确认后remaining会立刻归零；领奖必须先于整轮完成判断。
@@ -3948,7 +3988,14 @@
     // 分时每日项目。好友改为午饭后链式执行；酒吧单独放到10:05；搬家不纳入。
     { id: 'vitalityProbe', module: 'vitality', target: '/xz/restaurant_vitality', nav: '今日活跃', slot: '7:40', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 5000 },
     { id: 'dailyNpc', module: 'dailyNpc', target: '/xz/god', nav: '食神', route: [{ text: '食神', href: '/xz/god' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 45000 },
-    { id: 'dailyBar', module: 'dailyBar', target: '/xz/bar', nav: '广场', route: [{ text: '广场', href: '/xz/square' }, { text: '酒吧', href: '/xz/bar' }], slot: '10:05', jitterMin: 0, jitterMax: 3, runOnce: true, runMs: 180000 },
+    { id: 'dailyBar', module: 'dailyBar', target: '/xz/bar', nav: '广场', route: [{ text: '广场', href: '/xz/square' }, { text: '酒吧', href: '/xz/bar' }], slot: '10:05', jitterMin: 0, jitterMax: 3, runOnce: true, runMs: 180000, condition: () => hasDailyProjectRemaining(['number', 'fist', 'cup']) },
+    // 高次数无体力项目分散补跑：避开整点菜场与每小时31分沾光，完成后当天剩余轮次自动消失。
+    { id: 'dailyBarCatchup1', module: 'dailyBar', target: '/xz/bar', nav: '广场', route: [{ text: '广场', href: '/xz/square' }, { text: '酒吧', href: '/xz/bar' }], slot: '14:12', jitterMin: 0, jitterMax: 8, runOnce: true, runMs: 180000, projectScope: ['fist', 'cup'], condition: () => hasDailyProjectRemaining(['fist', 'cup']) },
+    { id: 'dailyBarCatchup2', module: 'dailyBar', target: '/xz/bar', nav: '广场', route: [{ text: '广场', href: '/xz/square' }, { text: '酒吧', href: '/xz/bar' }], slot: '18:12', jitterMin: 0, jitterMax: 8, runOnce: true, runMs: 180000, projectScope: ['fist', 'cup'], condition: () => hasDailyProjectRemaining(['fist', 'cup']) },
+    { id: 'dailyBarCatchup3', module: 'dailyBar', target: '/xz/bar', nav: '广场', route: [{ text: '广场', href: '/xz/square' }, { text: '酒吧', href: '/xz/bar' }], slot: '22:12', jitterMin: 0, jitterMax: 8, runOnce: true, runMs: 180000, projectScope: ['fist', 'cup'], condition: () => hasDailyProjectRemaining(['fist', 'cup']) },
+    { id: 'dailyFriendCatchup1', module: 'dailyFriend', target: '/xz/friend', nav: '好友', route: [{ text: '好友', href: '/xz/friend' }], slot: '16:12', jitterMin: 0, jitterMax: 8, runOnce: true, runMs: 300000, projectScope: ['like', 'dig', 'roach'], condition: () => hasDailyProjectRemaining(['like', 'dig', 'roach']) },
+    { id: 'dailyFriendCatchup2', module: 'dailyFriend', target: '/xz/friend', nav: '好友', route: [{ text: '好友', href: '/xz/friend' }], slot: '20:12', jitterMin: 0, jitterMax: 8, runOnce: true, runMs: 300000, projectScope: ['like', 'dig', 'roach'], condition: () => hasDailyProjectRemaining(['like', 'dig', 'roach']) },
+    { id: 'dailyFriendCatchup3', module: 'dailyFriend', target: '/xz/friend', nav: '好友', route: [{ text: '好友', href: '/xz/friend' }], slot: '23:12', jitterMin: 0, jitterMax: 8, runOnce: true, runMs: 300000, projectScope: ['like', 'dig', 'roach'], condition: () => hasDailyProjectRemaining(['like', 'dig', 'roach']) },
     { id: 'extraWish', module: 'extraWish', target: '/xz/wish', nav: '许愿', slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 60000 },
 
     // 早饭项目完成后领奖；晚饭后只复查领奖。临时活动入口消失时 optional 跳过。
@@ -4073,6 +4120,7 @@
     // 好友每日项目：只跟随午饭窗口完成；完成后再进入食材合成。
     {
       id: 'dailyFriendAfterLunch', module: 'dailyFriend', target: '/xz/friend', nav: '好友', route: [{ text: '好友', href: '/xz/friend' }], runMs: 180000, chainedOnly: true,
+      condition: () => hasDailyProjectRemaining(['like', 'dig', 'roach']),
       computeNext() {
         const nowMs = Utils.getServerTime().getTime();
         const lunchLast = Utils.gget('sched_energy_lunch_lastRun', 0);
@@ -4180,6 +4228,8 @@
   ];
 
   const ALL_ENTRIES = () => [...DAILY_SCHEDULE, ...DYNAMIC_SCHEDULE];
+  const entryConditionMet = (entry) => !entry?.condition || !!entry.condition();
+  const entryIsEnabled = (entry) => !!entry && isEnabled(entry.module) && entryConditionMet(entry);
 
   // ==================== 调度器（穷举表 + 单一 tick） ====================
   // 核心循环：
@@ -4295,7 +4345,7 @@
         this.computeAll();
         const nowMs = Utils.getServerTime().getTime();
         const due = ALL_ENTRIES()
-          .filter(entry => entry.nextRunAt && entry.nextRunAt <= nowMs && isEnabled(entry.module))
+          .filter(entry => entry.nextRunAt && entry.nextRunAt <= nowMs && entryIsEnabled(entry))
           .sort((a, b) => a.nextRunAt - b.nextRunAt)[0];
         if (path !== '/xz/') {
           if (due) {
@@ -4448,6 +4498,11 @@
       const nowMs = now.getTime();
 
       DAILY_SCHEDULE.forEach(e => {
+        if (!entryConditionMet(e)) {
+          e.nextRunAt = 0;
+          Utils.gset(`sched_${e.id}_nextAt`, 0);
+          return;
+        }
         const saved = Utils.gget(`sched_${e.id}_nextAt`, 0);
         // 已到点但尚未完成的计划必须保留；只有完成时 onReturnFromTarget 才清零。
         e.nextRunAt = saved > 0 ? saved : this.computeFixedNext(e, nowMs);
@@ -4455,6 +4510,11 @@
       });
 
       DYNAMIC_SCHEDULE.forEach(e => {
+        if (!entryConditionMet(e)) {
+          e.nextRunAt = 0;
+          Utils.gset(`sched_${e.id}_nextAt`, 0);
+          return;
+        }
         const saved = Utils.gget(`sched_${e.id}_nextAt`, 0);
         // 链式任务不能保存为独立周期；每次都由上游 lastRun 与自身 lastRun 重新判定。
         e.nextRunAt = e.chainedOnly ? e.computeNext() : (saved > 0 ? saved : e.computeNext());
@@ -4514,7 +4574,7 @@
     scheduleNext() {
       if (this.timer) { clearTimeout(this.timer); this.timer = null; }
 
-      const enabled = ALL_ENTRIES().filter(e => e.nextRunAt && isEnabled(e.module));
+      const enabled = ALL_ENTRIES().filter(e => e.nextRunAt && entryIsEnabled(e));
       if (enabled.length === 0) {
         Utils.showStatus('调度器', '无可调度任务', '#888');
         Utils.gset('sched_next', null);
@@ -4544,6 +4604,15 @@
     async fireToTarget(entry) {
       Utils.log(`调度器: 触发 ${entry.id} → ${entry.target}`);
 
+      if (!entryIsEnabled(entry)) {
+        entry.nextRunAt = 0;
+        Utils.gset(`sched_${entry.id}_nextAt`, 0);
+        Utils.log(`调度器: ${entry.id} 条件已满足或模块关闭，本轮取消`);
+        this.computeAll();
+        this.scheduleNext();
+        return;
+      }
+
       const existingPhase = Utils.gget(PHASE_KEY, null);
       if (existingPhase) {
         Utils.log(`调度器: 已有 ${existingPhase.id}/${existingPhase.state}，忽略重复触发 ${entry.id}`);
@@ -4560,6 +4629,22 @@
       // 周期食谱在真正触发时重置受阻集合并开启新轮次；长期目标等级保持不变。
       if (entry.module === 'recipe') MOD.recipe.startScan('长期调度器');
 
+      // 每个好友补跑轮次重新从好友列表扫描，但保留当天成功累计和已尝试动作，避免重复计数。
+      if (entry.module === 'dailyFriend') {
+        const friendState = DailyProjectState.load('friend');
+        friendState.pending = null;
+        friendState.visited = [];
+        // 成功的点赞/柜子当天不重复；失败动作允许下一轮重试，蟑螂则始终以新一轮真实图标为准。
+        friendState.tried = (friendState.succeeded || []).filter(signature => !signature.startsWith('roach:'));
+        friendState.page = 1;
+        DailyProjectState.save('friend', friendState);
+      }
+      if (entry.module === 'dailyBar') {
+        const barState = DailyProjectState.load('bar');
+        barState.pending = null;
+        DailyProjectState.save('bar', barState);
+      }
+
       // 记下当前 mod_<id>_done 值，waitForDone 据此判断"是否新完成"
       const beforeAt = Utils.gget(`mod_${entry.module}_done`, 0);
 
@@ -4572,6 +4657,7 @@
         startedAt: Date.now(),
         runMs: entry.runMs || 10000,
         beforeAt,
+        projectScope: Array.isArray(entry.projectScope) ? entry.projectScope : null,
       });
       if (entry.module === 'restaurant') {
         Utils.gset('restaurant_roach_attempts', 0);
@@ -4661,7 +4747,7 @@
         // 午饭后先执行耗时的好友项目；项目完成后再接食材合成。
         if (phase.id === 'energy' && energyWindow === 1 && isEnabled('dailyFriend')) {
           const friendEntry = ALL_ENTRIES().find(e => e.id === 'dailyFriendAfterLunch');
-          if (friendEntry) {
+          if (friendEntry && entryConditionMet(friendEntry)) {
             friendEntry.nextRunAt = completedAt;
             Utils.gset('sched_dailyFriendAfterLunch_nextAt', completedAt);
             Utils.log('调度器: 午饭后先执行好友每日项目，完成后再合成');
@@ -4945,9 +5031,12 @@
       const session = Utils.gget('autopilot_session', null) || { iter: 0 };
       const path = location.pathname;
       session.iter = (session.iter || 0) + 1;
-      // 守护者可能需要上百次单发，保留高上限防真死循环
-      if (session.iter > 500) {
-        Utils.warn(`自动驾驶: 单次会话迭代 ${session.iter} 次超限，强制停止`);
+      // 高次数每日项目每个成功动作都可能刷新一次；保护上限随用户配置增长，同时保留总封顶防真死循环。
+      const configuredDailyActions = DAILY_PROJECT_DEFS.reduce((sum, item) =>
+        sum + (projectEnabled(item.id) ? projectTarget(item.id) : 0), 0);
+      const iterationLimit = Math.min(3000, Math.max(500, 200 + configuredDailyActions * 4));
+      if (session.iter > iterationLimit) {
+        Utils.warn(`自动驾驶: 单次会话迭代 ${session.iter}/${iterationLimit} 次超限，强制停止`);
         this.stop('迭代超限保护');
         return;
       }
