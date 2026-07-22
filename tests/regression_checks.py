@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.71 metadata and shared panel version", "// @version      3.71" in text and "const SCRIPT_VERSION = '3.71';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.72 metadata and shared panel version", "// @version      3.72" in text and "const SCRIPT_VERSION = '3.72';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -143,13 +143,16 @@ require("guardian can replenish repeatedly after verified stock is consumed", "p
 require("guardian production replenishment is 300 below 200", "REPLENISH_BELOW: 200" in text and "BUY_COUNT: 300" in text and "buyByActivity(0,82,0)" in text)
 require("guardian returns directly to the real battle after replenishment", "location.assign('/xz/guardian')" in text and "进入守护者页继续攻击" in text and "findByText('a', '返回前页')" not in text[text.index("async returnFromStore(have, reason)"):text.index("async run()", text.index("async returnFromStore(have, reason)"))])
 require("guardian parses both inventories without zero fallback", "parseGuardianInventory()" in text and "parseStoreInventory()" in text and "拥有数量\\s*[：:]\\s*(\\d+)" in text and "have === null" in text)
-require("guardian records and verifies one purchase", "PURCHASE_KEY: 'guardian_missile_purchase'" in text and "before: have" in text and "have >= purchase.before + this.BUY_COUNT" in text and "12小时内不重复购买" in text)
+require("guardian records and verifies one purchase", "PURCHASE_KEY: 'guardian_missile_purchase'" in text and "before: have" in text and "have >= purchase.before + this.BUY_COUNT" in text and "保持阶段且不重复购买" in text)
 require("guardian supports current and legacy quantity input ids", "getElementById('buyNum') || document.getElementById('buy_num')" in text)
-require("guardian verifies same-page purchases without scheduler running stall", "for (let i = 0; i < 12; i++)" in text and "after >= have + this.BUY_COUNT" in text and "同页购买验证成功" in text and "本轮安全结束" in text)
+require("guardian verifies same-page purchases without scheduler running stall", "for (let i = 0; i < 30; i++)" in text and "after >= have + this.BUY_COUNT" in text and "同页购买验证成功" in text and "购买后15秒内库存仍未确认增长" in text)
 guardian_start = text.index("  MOD.guardian = {")
 guardian_end = text.index("  // ==================== 可配置每日项目", guardian_start)
 guardian_block = text[guardian_start:guardian_end]
 require("guardian ignores casual manual store browsing", "requiresScheduled: true" in guardian_block)
+require("guardian completes only from explicit page evidence", "isExplicitlyComplete()" in guardian_block and "页面已明确确认今日挑战完成" in guardian_block and "未找到单发按钮且页面没有明确完成文字" in guardian_block)
+require("guardian transient failures remain in progress", "retryCurrentPage(reason" in guardian_block and "本轮不记完成" in guardian_block and "购买未确认，安全停止" not in guardian_block and "本轮安全结束" not in guardian_block)
+require("guardian can return once stock reaches battle threshold", "thresholdVerified: true" in guardian_block and "购买后库存已达到战斗阈值" in guardian_block and "同页库存已达到战斗阈值" in guardian_block)
 require("egg action returns in-progress", "扭蛋: 已扭" in text and "return false;" in text)
 
 achievement_start = text.index("  MOD.achievement = {")
@@ -185,7 +188,7 @@ require("daily NPC is independent from paid market", "module: 'dailyNpc'" in tex
 luck_start = text.index("  MOD.dailyLuck = {")
 luck_end = text.index("  MOD.extraWish = {", luck_start)
 luck = text[luck_start:luck_end]
-require("daily luck is configurable and capped at three", "沾光（推荐3次）" in text and "id === 'luck' ? 3" in text and "p.id === 'luck' ? 3" in text)
+require("daily luck is configurable and capped at three", "沾光与到访礼物（沾光推荐3次）" in text and "id === 'luck' ? 3" in text and "p.id === 'luck' ? 3" in text)
 require("daily luck syncs exact server progress", "今日已沾光[：:\\s]*(\\d+)\\s*\\/\\s*3" in luck and "state.counts.luck = serverCount;" in luck)
 require("daily luck completes only on page-verified three of three", "if (serverCount >= 3)" in luck and "Utils.gset('luck_verified_day', gameDayKey());" in luck and "来访页已验证“今日已沾光：3 / 3次”" in luck and "if ((state.counts.luck || 0) >= 3) return true;" not in luck)
 require("daily luck refreshes stale back-cache before verification", "state.verifyFresh = succeeded;" in luck and "if (state.verifyFresh)" in luck and "state.verifyFresh = false;" in luck and "location.reload();" in luck and "刷新一次复核服务器N/3" in luck)
@@ -193,6 +196,10 @@ require("daily luck single-run still honors configured count", "activeActionScop
 require("daily luck follows only current deer or fool visits", "!/正在/.test(rowText)" in luck and "!/阿鹿|阿呆/.test(rowText)" in luck and "state.tried.includes(restaurantId)" in luck)
 require("daily luck clicks the real restaurant button", "addLuck(\"${restaurantId}\")" in luck and "a.textContent.trim() === '沾光'" in luck and "recordScopedProjectSuccess('luck');" in luck)
 require("daily luck exposes a scoped single-run route", "project_luck: { module: 'dailyLuck', navSteps: [{ text: '来访', hrefMatch: '/xz/come_log' }] }" in text and "luck: 'luck'" in text)
+require("daily luck checks own restaurant visit before others", "p === '/xz/' || p === '/xz/come'" in luck and "findHomeVisitLink()" in luck and luck.index("findHomeVisitLink()") < luck.index("if (location.pathname === '/xz/come_log')"))
+require("daily luck claims only the real gold gift", "getComeGift(0,0)" in luck and "(el.textContent || '').trim() === '[金宝箱]'" in luck and "getComeGift(0,1)" not in luck and "getComeGift(0,2)" not in luck)
+require("daily luck persists and verifies own gift", "state.selfGiftPending" in luck and "state.selfGiftClaimed = true" in luck and "已确认自己餐厅到访金宝箱领取成功" in luck and "selfGiftAttemptHour" in luck)
+require("daily luck absence of own visit is not a failure", "首页当前没有自己被到访提示，继续检查他人餐厅" in luck and "Utils.click(visitLog);" in luck)
 require("daily luck removes duplicate fixed catch-up entries", "id: 'dailyLuck1031'" not in daily and "id: 'dailyLuck1131'" not in daily)
 require("friend list prioritizes roach markers", "img[src=\"/readImg/xz_cockroach\"]" in text and "const marked = links.filter(hasRoachMark);" in text)
 require("friend floors follow roach markers", "const markedRoachFloor = floorLinks.find" in text and "Utils.click(floorToVisit);" in text)
@@ -210,6 +217,8 @@ require("market discount is exactly 666", "DISCOUNT_PRICE: 666" in text and "pri
 require("market discount dedupes by server hour", "market_last_discount_hour" in text)
 require("market parses current daily market rows", "a[onclick^='buyDayFood']" in text and r"buyDayFood\((\d+),(\d+),(\d+)\)" in text)
 require("market keeps old staple thresholds", "LEVEL1_TARGET: 950" in text and "LEVEL1_MAX_PRICE: 519" in text and "LEVEL2_TARGET: 950" in text and "LEVEL2_MAX_PRICE: 2650" in text and "FORCE_BUY_2: ['鸡肉', '猪肉']" in text)
+require("market emergency-buys 300 expensive level-two foods below 100", "LEVEL2_EMERGENCY_BELOW: 100" in text and "LEVEL2_EMERGENCY_BUY: 300" in text and "!isForce && !priceOk && f.currentStock < C.LEVEL2_EMERGENCY_BELOW" in text and "reason: '高价低库存紧急补货'" in text)
+require("market emergency plan does not top expensive foods to 950", "targetStock: f.currentStock + C.LEVEL2_EMERGENCY_BUY" in text and "buyAmount: C.LEVEL2_EMERGENCY_BUY" in text)
 require("market claims Tuesday reserve coupon first", "a[onclick^='getEverydayReserve']" in text and "已领取周二日常食材预定券" in text)
 require("market claim remains in progress across refresh", "Utils.click(reserveClaim);" in text and "return false;" in text)
 market_run = text[text.index("MOD.market = {"):text.index("// ----- 7. 食材券")]
@@ -237,6 +246,7 @@ require("restaurant oil threshold is 14000", "if (cur < 14000)" in text and "if 
 require("restaurant roach has per-cycle failure stop and hard cap", "MAX_ROACH_ATTEMPTS: 20" in text and "restaurant_roach_attempts" in text and "restaurant_roach_cycle_blocked" in text and "只停止本轮" in text)
 require("restaurant floor detection cannot oscillate between siblings", "el.previousElementSibling || el.nextElementSibling" not in text and ".some(tryMatch);" in text)
 require("scheduler expires persisted phases before module execution", "recoverExpiredPhase(path)" in text and text.index("recoverExpiredPhase(path)") < text.index("const activePhase = Scheduler.isOn()"))
+require("expired guardian phase schedules retry instead of completion", "守护者: 整轮超时只安排5分钟后重试，不写入今日完成" in text and "sched_${phase.id}_nextAt" in text)
 require("expired restaurant phase stops only current roach cycle", "超时自救只停止本轮打蟑螂" in text and "Utils.gset('restaurant_remaining_floors', []);" in text)
 require("restaurant roach defaults on and migrates prior forced-off value once", "restaurant_cockroach: true" in text and "v348_restaurant_cockroach_default_on" in text and "Utils.gset('restaurant_cockroach', true);" in text)
 require("restaurant roach runtime never permanently disables itself", "Utils.gset('restaurant_cockroach', false);" not in text)
@@ -258,7 +268,7 @@ require("daily friend still traverses friend pages", "下一页" in daily_friend
 require("friend cupboard identity is independent of duplicate floor pages", "`dig:${uid}:${button.getAttribute('onclick')" in daily_friend_run and "`dig:${uid}:${floor}:" not in daily_friend_run)
 require("friend floor navigation is reserved for marked cockroaches", "const floorToVisit = DailyProjectState.remaining('roach', state) > 0 ? markedRoachFloor : null;" in daily_friend_run and "nextFloor" not in daily_friend_run)
 daily_bar_start = text.index("MOD.dailyBar = {")
-daily_bar_end = text.index("// 餐厅来访沾光", daily_bar_start)
+daily_bar_end = text.index("// 餐厅来访：", daily_bar_start)
 daily_bar_run = text[daily_bar_start:daily_bar_end]
 cup_reward = daily_bar_run.index("a[onclick^='stopCupGuessing']")
 bar_complete = daily_bar_run.index("['fist', 'cup', 'number'].every")
@@ -319,7 +329,7 @@ require("scheduler restaurant route uses real href without mutable text", "id: '
 dynamic = text[text.index("const DYNAMIC_SCHEDULE = ["):text.index("const ALL_ENTRIES")]
 require("daily luck checks every hour at minute 31", "id: 'dailyLuckHourly', module: 'dailyLuck'" in dynamic and "setHours(10, 31, 0, 0)" in dynamic and "setHours(hour + 1, 31, 0, 0)" in dynamic)
 require("daily luck catches up only current hour", "sched_dailyLuckHourly_lastRun" in dynamic and "ranThisHour" in dynamic and "nowMs + 5000" in dynamic and "dailyLuck1031" not in dynamic and "dailyLuck1131" not in dynamic)
-require("daily luck stops scheduling after page verification", "luck_verified_day" in dynamic and "return nextDayStart();" in dynamic)
+require("daily luck keeps hourly checks until both jobs finish", "ownGiftDone" in dynamic and "luck_verified_day" in dynamic and "&& ownGiftDone" in dynamic and "target: '/xz/'" in dynamic)
 require("food compound is chained after every completed meal", "id: 'foodCompoundAfterEnergy', module: 'foodCompound'" in dynamic and "energyLast > compoundLast" in dynamic and "chainedOnly: true" in dynamic)
 require("friend daily projects are chained after lunch", "id: 'dailyFriendAfterLunch', module: 'dailyFriend'" in dynamic and "sched_energy_lunch_lastRun" in dynamic and "lunchLast > friendLast" in dynamic and "chainedOnly: true" in dynamic)
 require("lunch launches friend before compound", "energyWindow === 1 && isEnabled('dailyFriend')" in text and text.index("void this.fireToTarget(friendEntry);") < text.index("void this.fireToTarget(compoundEntry);") and "好友每日项目完成，开始午饭后食材合成" in text)

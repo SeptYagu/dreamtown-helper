@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.71
+// @name         梦想小镇日常一体化 v3.72
 // @namespace    http://tampermonkey.net/
-// @version      3.71
+// @version      3.72
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋/成就
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.72 变更（2026-07-22 守护者续战、菜场保底与到访礼物）
+ * - 守护者补货未确认或按钮暂缺时保持当前阶段并复核，只有页面明确显示挑战完成才结束
+ * - 普通2级菜价格高于2650但库存低于100时紧急购买300个；原限价补到950及鸡肉/猪肉规则保留
+ * - 沾光模块每小时先检查阿鹿/阿呆到访自己餐厅，存在时领取真实金宝箱，再继续检查别人餐厅沾光
+ *
  * v3.71 变更（2026-07-19 手动浏览隔离）
  * - 免费宝箱模块增加调度门禁，普通手动进入酒吧时不再被自动跳转到开宝箱页
  *
@@ -341,7 +346,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.71';
+  const SCRIPT_VERSION = '3.72';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -511,7 +516,7 @@
     { id: 'cup', label: '猜酒杯（与猜拳合计推荐20次）', recommended: 10, module: 'dailyBar' },
     { id: 'number', label: '猜数字（推荐1次）', recommended: 1, module: 'dailyBar' },
     { id: 'npc', label: '拜访NPC（推荐1轮）', recommended: 1, module: 'dailyNpc' },
-    { id: 'luck', label: '沾光（推荐3次）', recommended: 3, module: 'dailyLuck' },
+    { id: 'luck', label: '沾光与到访礼物（沾光推荐3次）', recommended: 3, module: 'dailyLuck' },
     { id: 'extraWish', label: '额外许愿果（常驻推荐0次）', recommended: 0, module: 'extraWish' },
   ];
   // 从 v3.32 的“拜访雯姐”开关迁移；一轮现统一处理食神、菜园姐、阿鹿、安妮与雯姐。
@@ -1459,9 +1464,9 @@
   // ----- 5. 食材采购（特价 + 常驻菜补货）-----
   // 整合自原 v5.3 整点食材采购助手的关键逻辑：
   //   1) 特价（buyDiscountFood，6-23 整点刷新）— 全买
-  //   2) 每日菜场（当前 buyDayFood；兼容旧 buyFood）— 库存 < 950 时补到 950
+  //   2) 每日菜场（当前 buyDayFood；兼容旧 buyFood）— 限价内库存 < 950 时补到 950
   //      1 级：≤519金 → 强制补到 950
-  //      2 级：≤2650金 → 强制补到 950；鸡肉/猪肉无视价格强制补
+  //      2 级：≤2650金 → 强制补到 950；鸡肉/猪肉无视价格强制补；其它高价菜低于100时买300
   //   3) 金币不足 → 24h 冷却（GM 持久化），避免反复失败
   // 持久化字段：
   //   market_cooldown_until: ms 时间戳（0 或小于 now 表示可买）
@@ -1475,6 +1480,8 @@
       LEVEL1_MAX_PRICE: 519,     // 1 级菜触发补货的最高单价
       LEVEL2_TARGET: 950,        // 2 级菜目标库存
       LEVEL2_MAX_PRICE: 2650,    // 2 级菜触发补货的最高单价
+      LEVEL2_EMERGENCY_BELOW: 100, // 普通高价 2 级菜紧急补货阈值
+      LEVEL2_EMERGENCY_BUY: 300, // 普通高价 2 级菜每次固定购买量
       FORCE_BUY_2: ['鸡肉', '猪肉'],  // 强制购买的 2 级菜（无视价格）
       BUY_CAP_PER_FIRE: 999,     // 单次购买输入框上限
       DISCOUNT_PRICE: 666,       // 与旧脚本一致：特价仅买 666 金币
@@ -1528,7 +1535,10 @@
         Utils.log('市场: 无常驻菜');
         return true;
       }
-      const needBuy = staples.filter(f => this.shouldBuyStaple(f));
+      const needBuy = staples.map(f => {
+        const plan = this.planStaplePurchase(f);
+        return plan ? { ...f, ...plan } : null;
+      }).filter(Boolean);
       if (needBuy.length === 0) {
         Utils.log('市场: 常驻菜全部达标');
         Utils.gset('market_last_processed', '');
@@ -1548,10 +1558,10 @@
       Utils.gset('market_last_processed', `${foodToBuy.level}级${foodToBuy.name}`);
 
       // 计算购买数量（补到目标）
-      const buyAmount = Math.min(foodToBuy.targetStock - foodToBuy.currentStock, this.CONFIG.BUY_CAP_PER_FIRE);
+      const buyAmount = Math.min(foodToBuy.buyAmount, this.CONFIG.BUY_CAP_PER_FIRE);
       if (buyAmount <= 0) return true;
 
-      Utils.log(`市场: 准备补 ${foodToBuy.name} (${foodToBuy.level}级) ${foodToBuy.currentStock}→${foodToBuy.targetStock}, 本次买 ${buyAmount}`);
+      Utils.log(`市场: ${foodToBuy.reason} ${foodToBuy.name} (${foodToBuy.level}级) ${foodToBuy.currentStock}→${foodToBuy.targetStock}, 本次买 ${buyAmount}`);
 
       // 设置数量并触发购买
       await this.fillBuyAmount(foodToBuy.input, buyAmount);
@@ -1591,18 +1601,39 @@
       return out;
     },
 
-    // 是否应当触发补货
-    shouldBuyStaple(f) {
+    // 返回本轮购买计划；高价普通2级菜只做一次300个紧急补货，不追到950。
+    planStaplePurchase(f) {
       const C = this.CONFIG;
       if (f.level === 1) {
-        return f.price <= C.LEVEL1_MAX_PRICE && f.currentStock < C.LEVEL1_TARGET;
+        if (f.price <= C.LEVEL1_MAX_PRICE && f.currentStock < C.LEVEL1_TARGET) {
+          return {
+            targetStock: C.LEVEL1_TARGET,
+            buyAmount: C.LEVEL1_TARGET - f.currentStock,
+            reason: '限价补货',
+          };
+        }
+        return null;
       }
       if (f.level === 2) {
         const isForce = C.FORCE_BUY_2.includes(f.name);
         const priceOk = f.price <= C.LEVEL2_MAX_PRICE;
-        return f.currentStock < C.LEVEL2_TARGET && (isForce || priceOk);
+        if (f.currentStock < C.LEVEL2_TARGET && (isForce || priceOk)) {
+          return {
+            targetStock: C.LEVEL2_TARGET,
+            buyAmount: C.LEVEL2_TARGET - f.currentStock,
+            reason: isForce && !priceOk ? '指定食材强制补货' : '限价补货',
+          };
+        }
+        if (!isForce && !priceOk && f.currentStock < C.LEVEL2_EMERGENCY_BELOW) {
+          return {
+            targetStock: f.currentStock + C.LEVEL2_EMERGENCY_BUY,
+            buyAmount: C.LEVEL2_EMERGENCY_BUY,
+            reason: '高价低库存紧急补货',
+          };
+        }
+        return null;
       }
-      return false;
+      return null;
     },
 
     // 填入数量（多方式确保触发）
@@ -2458,6 +2489,7 @@
     BUY_COUNT: 300,
     FAILED_RETRY_MS: 12 * 3600000,
     VERIFIED_GRACE_MS: 12 * 3600000,
+    RETRY_RELOAD_MS: 3000,
     maxPhaseAgeMs: 20 * 60000,
 
     loadPurchase() {
@@ -2502,6 +2534,18 @@
       return match ? Number(match[1]) : null;
     },
 
+    isExplicitlyComplete() {
+      const text = document.body?.innerText || document.body?.textContent || '';
+      return /今日已挑战守护者|明天再来|击败了守护者|守护者(?:已被击败|挑战完成)/.test(text);
+    },
+
+    retryCurrentPage(reason, delayMs = this.RETRY_RELOAD_MS) {
+      Utils.warn(`守护者: ${reason}，${Math.round(delayMs / 1000)}秒后刷新复核；本轮不记完成`);
+      Utils.showStatus('守护者', '等待页面复核');
+      setTimeout(() => location.reload(), delayMs);
+      return false;
+    },
+
     async returnFromStore(have, reason) {
       await Utils.sleep(Utils.randMs(1, 2));
       // 物品页购买可能新增/替换同路径历史记录，“返回前页”不能保证落回守护者。
@@ -2515,23 +2559,23 @@
       if (location.pathname === '/xz/guardian') {
         const singleLaunchBtn = this.findLaunchButton(1);
         if (!singleLaunchBtn) {
-          Utils.log('守护者: 已被击败或按钮未找到');
-          Utils.showStatus('守护者', '已完成');
-          return true;
+          if (this.isExplicitlyComplete()) {
+            Utils.gset(this.PURCHASE_KEY, null);
+            Utils.log('守护者: 页面已明确确认今日挑战完成');
+            Utils.showStatus('守护者', '已完成');
+            return true;
+          }
+          return this.retryCurrentPage('未找到单发按钮且页面没有明确完成文字');
         }
 
         const have = this.parseGuardianInventory();
         if (have === null) {
-          Utils.warn('守护者: 无法读取爆裂飞弹库存，安全停止（不购买、不发射）');
-          Utils.showStatus('守护者', '库存读取失败');
-          return true;
+          return this.retryCurrentPage('无法读取爆裂飞弹库存（不购买、不发射）');
         }
 
         const hp = this.parseGuardianHp();
         if (hp === null) {
-          Utils.warn('守护者: 无法读取剩余血量，安全停止（不购买、不发射）');
-          Utils.showStatus('守护者', '血量读取失败');
-          return true;
+          return this.retryCurrentPage('无法读取剩余血量（不购买、不发射）');
         }
 
         let purchase = this.loadPurchase();
@@ -2544,9 +2588,7 @@
           const launchCount = hp > 1000 ? 10 : 1;
           const launchBtn = launchCount === 10 ? this.findLaunchButton(10) : singleLaunchBtn;
           if (!launchBtn) {
-            Utils.warn(`守护者: 血量 ${hp} 应发射${launchCount}次，但找不到对应真实按钮`);
-            Utils.showStatus('守护者', '发射按钮读取失败');
-            return true;
+            return this.retryCurrentPage(`血量 ${hp} 应发射${launchCount}次，但找不到对应真实按钮`);
           }
           await Utils.sleep(Utils.randMs(1, 2));
           Utils.click(launchBtn);
@@ -2558,8 +2600,7 @@
           (a.getAttribute('href') || '') === '/xz/prop_82'
         );
         if (!shopLink) {
-          Utils.warn(`守护者: 库存 ${have} < ${this.REPLENISH_BELOW}，但找不到爆裂飞弹商店入口`);
-          return true;
+          return this.retryCurrentPage(`库存 ${have} < ${this.REPLENISH_BELOW}，但找不到爆裂飞弹商店入口`);
         }
         await Utils.sleep(Utils.randMs(1, 2));
         Utils.click(shopLink);
@@ -2569,9 +2610,7 @@
         // /xz/prop_82 商店页：必须明确读取库存，且每次提交后验证增长。
         const have = this.parseStoreInventory();
         if (have === null) {
-          Utils.warn('守护者: 商店无法读取“拥有数量”，安全停止（未购买）');
-          Utils.showStatus('守护者', '商店库存读取失败');
-          return true;
+          return this.retryCurrentPage('商店无法读取“拥有数量”（未购买）');
         }
 
         let purchase = this.loadPurchase();
@@ -2588,10 +2627,15 @@
             Utils.log(`守护者: 购买验证成功，库存 ${purchase.before} → ${have}`);
             return this.returnFromStore(have, `已确认购买 ${this.BUY_COUNT} 个爆裂飞弹成功`);
           }
+          // 即使页面没有呈现精确+300，只要已达到战斗阈值，也应回去继续打，不能误记整轮完成。
+          if (have >= this.REPLENISH_BELOW) {
+            purchase = { ...purchase, after: have, verifiedAt: Date.now(), thresholdVerified: true };
+            Utils.gset(this.PURCHASE_KEY, purchase);
+            Utils.log(`守护者: 购买后库存已达到战斗阈值 ${have}，返回继续攻击`);
+            return this.returnFromStore(have, '库存已达到战斗阈值');
+          }
           if (Date.now() - purchase.clickedAt < this.FAILED_RETRY_MS) {
-            Utils.warn(`守护者: 已提交购买但库存未增长（${purchase.before} → ${have}），12小时内不重复购买`);
-            Utils.showStatus('守护者', '购买未确认，安全停止');
-            return true;
+            return this.retryCurrentPage(`已提交购买但库存尚未确认增长（${purchase.before} → ${have}），保持阶段且不重复购买`);
           }
           Utils.gset(this.PURCHASE_KEY, null);
           purchase = null;
@@ -2619,7 +2663,7 @@
 
           // buyByActivity 当前是同页更新，不一定触发页面重载；主动轮询验证，
           // 让Router/Scheduler也能完成本轮，而不只依赖AutoPilot的3秒续跑。
-          for (let i = 0; i < 12; i++) {
+          for (let i = 0; i < 30; i++) {
             await Utils.sleep(500);
             const after = this.parseStoreInventory();
             if (after !== null && after >= have + this.BUY_COUNT) {
@@ -2635,13 +2679,24 @@
               Utils.log(`守护者: 同页购买验证成功，库存 ${have} → ${after}`);
               return this.returnFromStore(after, `已确认购买 ${this.BUY_COUNT} 个爆裂飞弹成功`);
             }
+            if (after !== null && after >= this.REPLENISH_BELOW) {
+              const verified = {
+                threshold: this.REPLENISH_BELOW,
+                buyCount: this.BUY_COUNT,
+                before: have,
+                clickedAt: Date.now(),
+                after,
+                verifiedAt: Date.now(),
+                thresholdVerified: true,
+              };
+              Utils.gset(this.PURCHASE_KEY, verified);
+              Utils.log(`守护者: 同页库存已达到战斗阈值 ${have} → ${after}`);
+              return this.returnFromStore(after, '库存已达到战斗阈值');
+            }
           }
-          Utils.warn(`守护者: 购买后6秒内库存未确认增长，12小时内不重复购买，本轮安全结束`);
-          Utils.showStatus('守护者', '购买未确认，安全结束');
-          return true;
+          return this.retryCurrentPage('购买后15秒内库存仍未确认增长，保持阶段并跨刷新复核');
         }
-        Utils.warn('守护者: 商店页未找到数量框或购买按钮');
-        return true;
+        return this.retryCurrentPage('商店页未找到数量框或购买按钮');
       }
     },
   };
@@ -3001,15 +3056,122 @@
     },
   };
 
-  // 餐厅来访沾光：只处理当前“正在做客”的阿鹿/阿呆记录；历史记录绝不回扫。
+  // 餐厅来访：先领取阿鹿/阿呆到访自己餐厅的金宝箱，再处理当前正在做客的他人餐厅沾光。
   MOD.dailyLuck = {
-    match: (p) => p === '/xz/come_log' || /^\/xz\/restaurant_\d+_1$/.test(p),
+    match: (p) => p === '/xz/' || p === '/xz/come' || p === '/xz/come_log' || /^\/xz\/restaurant_\d+_1$/.test(p),
     schedule: 'daily-project',
     requiresScheduled: true,
+
+    findHomeVisitLink() {
+      return Array.from(document.querySelectorAll('a[href="/xz/come"]')).find(a => {
+        const rowText = a.parentElement?.textContent || a.textContent || '';
+        return /阿鹿|阿呆/.test(rowText) && /来你家餐厅做客/.test(rowText);
+      }) || null;
+    },
+
+    findGoldGift() {
+      return Array.from(document.querySelectorAll('[onclick]')).find(el =>
+        (el.getAttribute('onclick') || '').replace(/\s+/g, '') === 'getComeGift(0,0)' &&
+        (el.textContent || '').trim() === '[金宝箱]'
+      ) || null;
+    },
+
+    visitHourKey() {
+      const now = Utils.getServerTime();
+      return `${gameDayKey(now)}-${now.getHours()}`;
+    },
+
+    async goHomeFromVisit() {
+      const home = Array.from(document.querySelectorAll('a[href]')).find(a => {
+        const href = a.getAttribute('href') || '';
+        const label = (a.textContent || '').trim();
+        return href === '/xz/' && (label === '首页' || label === '返回首页');
+      });
+      if (!home) return this.retryVisitPage('到访页找不到真实首页链接');
+      await Utils.sleep(Utils.randMs(1, 2));
+      Utils.click(home);
+      return false;
+    },
+
+    retryVisitPage(reason) {
+      Utils.warn(`每日沾光: ${reason}，3秒后刷新复核`);
+      setTimeout(() => location.reload(), 3000);
+      return false;
+    },
+
     async run() {
       const state = DailyProjectState.load('luck');
       const text = document.body.textContent || '';
       const restaurantMatch = location.pathname.match(/^\/xz\/restaurant_(\d+)_1$/);
+
+      if (location.pathname === '/xz/') {
+        const phase = Utils.gget(PHASE_KEY, null);
+        if (phase?.module === 'dailyLuck' && phase.state === 'returning') return true;
+
+        const ownVisit = this.findHomeVisitLink();
+        if (ownVisit && !state.selfGiftClaimed && state.selfGiftAttemptHour !== this.visitHourKey()) {
+          Utils.log('每日沾光: 首页发现阿鹿/阿呆到访自己餐厅，先检查金宝箱');
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(ownVisit);
+          return false;
+        }
+
+        const visitLog = Array.from(document.querySelectorAll('a[href="/xz/come_log"]'))[0];
+        if (!visitLog) return this.retryVisitPage('首页找不到餐厅来访记录入口');
+        Utils.log(ownVisit ? '每日沾光: 今日到访礼物已处理，继续检查他人餐厅' : '每日沾光: 首页当前没有自己被到访提示，继续检查他人餐厅');
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(visitLog);
+        return false;
+      }
+
+      if (location.pathname === '/xz/come') {
+        const goldGift = this.findGoldGift();
+        if (state.selfGiftPending) {
+          if (/领取成功/.test(text)) {
+            state.selfGiftClaimed = true;
+            state.selfGiftAttemptHour = this.visitHourKey();
+            state.selfGiftPending = null;
+            DailyProjectState.save('luck', state);
+            Utils.log('每日沾光: 已确认自己餐厅到访金宝箱领取成功');
+            return this.goHomeFromVisit();
+          }
+          if (goldGift) {
+            state.selfGiftAttemptHour = this.visitHourKey();
+            state.selfGiftPending = null;
+            DailyProjectState.save('luck', state);
+            Utils.warn('每日沾光: 点击金宝箱后控件仍存在，本次不重复点击');
+            return this.goHomeFromVisit();
+          }
+          state.selfGiftClaimed = true;
+          state.selfGiftAttemptHour = this.visitHourKey();
+          state.selfGiftPending = null;
+          DailyProjectState.save('luck', state);
+          Utils.log('每日沾光: 金宝箱控件已消失，按服务器已领取状态继续');
+          return this.goHomeFromVisit();
+        }
+
+        if (goldGift && !state.selfGiftClaimed && state.selfGiftAttemptHour !== this.visitHourKey()) {
+          state.selfGiftPending = { clickedAt: Date.now(), onclick: 'getComeGift(0,0)' };
+          state.selfGiftAttemptHour = this.visitHourKey();
+          DailyProjectState.save('luck', state);
+          Utils.log('每日沾光: 点击自己餐厅到访的真实[金宝箱]');
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(goldGift);
+          // getComeGift可能整页跳转，也可能只更新当前页；后者主动刷新以便Scheduler继续验证。
+          setTimeout(() => {
+            if (location.pathname === '/xz/come') location.reload();
+          }, 3000);
+          return false;
+        }
+
+        if (!goldGift) {
+          state.selfGiftClaimed = true;
+          state.selfGiftAttemptHour = this.visitHourKey();
+          DailyProjectState.save('luck', state);
+          Utils.log('每日沾光: 到访页没有可领取金宝箱，按本次已检查处理');
+        }
+        return this.goHomeFromVisit();
+      }
 
       // 点击沾光会刷新当前餐厅页；先读取明确结果，再决定是否计数。
       if (state.pending) {
@@ -3499,9 +3661,9 @@
   //   computeNext(): 必填，返回下次触发的 ms 时间戳
 
   const DYNAMIC_SCHEDULE = [
-    // 餐厅来访沾光：10:31-21:31逐小时检查；只有来访页实际验证3/3才停到次日。
+    // 餐厅来访：10:31-21:31逐小时从首页开始，先检查自己被到访金宝箱，再检查他人餐厅沾光。
     {
-      id: 'dailyLuckHourly', module: 'dailyLuck', target: '/xz/come_log', nav: '来访', runMs: 60000,
+      id: 'dailyLuckHourly', module: 'dailyLuck', target: '/xz/', nav: '刷新', route: [{ text: '刷新', href: '/xz/' }], runMs: 60000,
       computeNext() {
         const now = Utils.getServerTime();
         const nowMs = now.getTime();
@@ -3512,7 +3674,9 @@
           next.setHours(10, 31, 0, 0);
           return next.getTime();
         };
-        if (Utils.gget('luck_verified_day', '') === todayKey) return nextDayStart();
+        const luckState = Utils.gget('project_state_luck', null);
+        const ownGiftDone = luckState?.day === todayKey && !!luckState.selfGiftClaimed;
+        if (Utils.gget('luck_verified_day', '') === todayKey && ownGiftDone) return nextDayStart();
 
         const hour = now.getHours();
         const minute = now.getMinutes();
@@ -3718,6 +3882,19 @@
       if (Date.now() - phase.startedAt <= maxAgeMs) return false;
 
       Utils.warn(`调度器: ${phase.id}/${phase.state} 已超过 ${Math.round(maxAgeMs / 1000)} 秒，终止旧阶段并返回首页`);
+      if (phase.module === 'guardian') {
+        const retryAt = Utils.getServerTime().getTime() + 5 * 60000;
+        Utils.gset(`sched_${phase.id}_nextAt`, retryAt);
+        Utils.gset(PHASE_KEY, null);
+        Utils.warn('守护者: 整轮超时只安排5分钟后重试，不写入今日完成');
+        if (currentPath === '/xz/') {
+          this.computeAll();
+          this.scheduleNext();
+        } else {
+          await this.navigateHome();
+        }
+        return true;
+      }
       if (phase.module === 'restaurant') {
         Utils.gset('restaurant_roach_cycle_blocked', true);
         Utils.gset('restaurant_roach_attempts', 0);
