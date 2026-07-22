@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.75 metadata and shared panel version", "// @version      3.75" in text and "const SCRIPT_VERSION = '3.75';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.76 metadata and shared panel version", "// @version      3.76" in text and "const SCRIPT_VERSION = '3.76';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -185,6 +185,10 @@ require("scheduled friend rounds reset traversal but preserve daily progress", "
 require("friend retries failed actions but preserves successful daily actions", "state.succeeded" in text and "state.succeeded.push(signature)" in text and "friendState.tried = (friendState.succeeded || []).filter" in text and "!signature.startsWith('roach:')" in text)
 require("bar resource exhaustion ends only the current round", "本轮因礼券不足或暂时无法参与而结束" in text and "每日缺口保留给后续补跑" in text)
 require("autopilot iteration protection scales with configured daily targets", "configuredDailyActions" in text and "Math.min(3000, Math.max(500, 200 + configuredDailyActions * 4))" in text)
+require("vitality sync uses exact server friend progress", "syncDailyProgressFromVitality" in text and "if (value !== null) friend.counts[id] = value;" in text and "Math.max(friend.counts.like" not in text)
+require("vitality reconciles bar total without preserving false local completion", "bar.serverCombined = combined;" in text and "combined - fist - cup" in text and "Math.max(bar.counts.fist" not in text)
+require("three read-only progress audits precede catch-up rounds", all(f"id: 'dailyProgressAudit{i}'" in daily for i in range(1, 4)) and "slot: '14:00'" in daily and "slot: '18:00'" in daily and "slot: '22:00'" in daily and "只读检查完成，不领取奖励" in text)
+require("progress audit is isolated from vitality reward claims", "MOD.dailyProgress =" in text and "requiresScheduled: true" in text[text.index("MOD.dailyProgress ="):text.index("// ----- 13.", text.index("MOD.dailyProgress ="))])
 require("daily NPC project is one complete round", "拜访NPC（推荐1轮）" in text and "['god', 'garden', 'deer', 'annie', 'wenjie'].every" in text and "本轮完成 1/1" in text)
 require("daily NPC round includes all five visits", "visitHere('god', '食神')" in text and "visitHere('garden', '菜园姐')" in text and "visitHere('deer', '阿鹿')" in text and "visitHere('annie', '安妮')" in text and "visitHere('wenjie', '雯姐')" in text)
 require("daily NPC association route returns through square", "goRequired('/xz/association')" in text and "location.pathname === '/xz/association'" in text and "goRequired('/xz/square')" in text and "!state.visited.includes('annie')" in text)

@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.75
+// @name         梦想小镇日常一体化 v3.76
 // @namespace    http://tampermonkey.net/
-// @version      3.75
+// @version      3.76
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材预定/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋/成就
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.76 变更（2026-07-22 服务器进度校准）
+ * - 今日活跃页的好友与酒吧次数改为服务器权威值，不再用Math.max保留旧版本虚高的本地计数
+ * - 酒吧合计次数按已知猜杯进度优先保留、其余分配给猜拳，确保合计缺口会继续触发补跑
+ * - 每日14:00/18:00/22:00 +0至3分钟只读复核活跃进度，为后续好友/酒吧补跑提供新鲜完成判定
+ *
  * v3.75 变更（2026-07-22 每日累计补跑）
  * - 点赞与酒吧次数明确按服务器06:00重置的每日累计目标执行；单轮超时不再意味着当天没有后续机会
  * - 酒吧保留10:05首轮并增加14:12/18:12/22:12 +0至8分钟补跑；好友午饭后主轮外增加16:12/20:12/23:12 +0至8分钟补跑
@@ -361,7 +366,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.75';
+  const SCRIPT_VERSION = '3.76';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -495,6 +500,7 @@
     { id: 'guardian',   label: '13. 守护者(爆裂)', default: true, schedule: 'guardian' },
     { id: 'dailyFriend', label: '每日好友项目', default: true, schedule: 'daily-project', hidden: true },
     { id: 'dailyBar',    label: '每日酒吧项目', default: true, schedule: 'daily-project', hidden: true },
+    { id: 'dailyProgress', label: '每日项目进度校准', default: true, schedule: 'daily-project', hidden: true },
     { id: 'dailyNpc',    label: '每日NPC拜访', default: true, schedule: 'daily-project', hidden: true },
     { id: 'dailyLuck',   label: '每日餐厅沾光', default: true, schedule: 'daily-project', hidden: true },
     { id: 'extraWish',   label: '额外许愿项目', default: true, schedule: 'daily-project', hidden: true },
@@ -514,6 +520,10 @@
   if (Utils.gget('food_reserve_pref_2', null) === null) Utils.gset('food_reserve_pref_2', 'auto');
 
   const isEnabled = (id) => {
+    if (id === 'dailyProgress') {
+      return Utils.gget('mod_dailyProjects_enabled', true) &&
+        DAILY_PROJECT_DEFS.some(p => projectEnabled(p.id) && projectTarget(p.id) > 0);
+    }
     if (['dailyFriend', 'dailyBar', 'dailyNpc', 'dailyLuck', 'extraWish'].includes(id)) {
       return Utils.gget('mod_dailyProjects_enabled', true) &&
         DAILY_PROJECT_DEFS.some(p => p.module === id && projectEnabled(p.id) && projectTarget(p.id) > 0);
@@ -3087,6 +3097,50 @@
     return (state.counts[id] || 0) < projectTarget(id);
   });
 
+  const syncDailyProgressFromVitality = () => {
+    const rows = Array.from(document.querySelectorAll('p')).map(p => p.textContent.replace(/\s+/g, ' ').trim());
+    const readProgress = (label) => {
+      const row = rows.find(t => t.includes(label));
+      const match = row?.match(/(\d+)\s*\/\s*(\d+)/);
+      return match ? Number(match[1]) : null;
+    };
+
+    const friend = DailyProjectState.load('friend');
+    const friendProgress = {
+      like: readProgress('点赞/被赞'),
+      dig: readProgress('翻橱柜'),
+      roach: readProgress('打蟑螂'),
+    };
+    Object.entries(friendProgress).forEach(([id, value]) => {
+      if (value !== null) friend.counts[id] = value;
+    });
+    DailyProjectState.save('friend', friend);
+
+    const bar = DailyProjectState.load('bar');
+    const combined = readProgress('酒吧猜拳/猜酒杯');
+    if (combined !== null) {
+      const fistTarget = projectTarget('fist');
+      const cupTarget = projectTarget('cup');
+      // 猜杯单项有独立本地成功记录，优先保留；其余服务器合计先分配给猜拳，再补猜杯。
+      let cup = Math.min(cupTarget, Math.max(0, Number(bar.counts.cup) || 0), combined);
+      let fist = Math.min(fistTarget, Math.max(0, Number(bar.counts.fist) || 0), Math.max(0, combined - cup));
+      let unassigned = Math.max(0, combined - fist - cup);
+      const addFist = Math.min(Math.max(0, fistTarget - fist), unassigned);
+      fist += addFist;
+      unassigned -= addFist;
+      cup += Math.min(Math.max(0, cupTarget - cup), unassigned);
+      bar.counts.fist = fist;
+      bar.counts.cup = cup;
+      bar.serverCombined = combined;
+    }
+    const number = readProgress('酒吧猜数字');
+    if (number !== null) bar.counts.number = number;
+    DailyProjectState.save('bar', bar);
+    Utils.gset('daily_progress_server_synced_at', Utils.getServerTime().getTime());
+    Utils.log(`每日进度校准: 赞${friend.counts.like || 0} 柜${friend.counts.dig || 0} 蟑${friend.counts.roach || 0} 酒吧${combined ?? '未知'}`);
+    return { friendProgress, combined, number };
+  };
+
   // 好友项目：逐个好友、逐层扫描；只在页面明确返回成功时增加进度。
   MOD.dailyFriend = {
     match: (p) => /^\/xz\/friend(?:_0_\d+)?$/.test(p) || /^\/xz\/restaurant_\d+_\d+$/.test(p),
@@ -3663,24 +3717,7 @@
     match: (p) => p === '/xz/restaurant_vitality',
     schedule: 'reward-twice',
     async run() {
-      const rows = Array.from(document.querySelectorAll('p')).map(p => p.textContent.replace(/\s+/g, ' ').trim());
-      const readProgress = (label) => {
-        const row = rows.find(t => t.includes(label));
-        const m = row?.match(/(\d+)\s*\/\s*(\d+)/);
-        return m ? +m[1] : 0;
-      };
-      const friend = DailyProjectState.load('friend');
-      friend.counts.like = Math.max(friend.counts.like || 0, readProgress('点赞/被赞'));
-      friend.counts.dig = Math.max(friend.counts.dig || 0, readProgress('翻橱柜'));
-      friend.counts.roach = Math.max(friend.counts.roach || 0, readProgress('打蟑螂'));
-      DailyProjectState.save('friend', friend);
-      const bar = DailyProjectState.load('bar');
-      const combined = readProgress('酒吧猜拳/猜酒杯');
-      const fistFromPage = Math.min(projectTarget('fist'), combined);
-      bar.counts.fist = Math.max(bar.counts.fist || 0, fistFromPage);
-      bar.counts.cup = Math.max(bar.counts.cup || 0, Math.max(0, combined - fistFromPage));
-      bar.counts.number = Math.max(bar.counts.number || 0, readProgress('酒吧猜数字'));
-      DailyProjectState.save('bar', bar);
+      syncDailyProgressFromVitality();
 
       const phase = Utils.gget(PHASE_KEY, null);
       if (phase?.id === 'vitalityProbe') {
@@ -3696,6 +3733,18 @@
       Utils.click(claim);
       Utils.log('今日活跃: 领取第一项，刷新后继续');
       return false;
+    },
+  };
+
+  // 补跑前只读校准服务器次数，不领取活跃奖励；与奖励模块共用页面但由phase严格隔离。
+  MOD.dailyProgress = {
+    match: (p) => p === '/xz/restaurant_vitality',
+    schedule: 'daily-project',
+    requiresScheduled: true,
+    async run() {
+      syncDailyProgressFromVitality();
+      Utils.log('每日进度校准: 只读检查完成，不领取奖励');
+      return true;
     },
   };
 
@@ -3987,6 +4036,9 @@
 
     // 分时每日项目。好友改为午饭后链式执行；酒吧单独放到10:05；搬家不纳入。
     { id: 'vitalityProbe', module: 'vitality', target: '/xz/restaurant_vitality', nav: '今日活跃', slot: '7:40', jitterMin: 0, jitterMax: 0, runOnce: true, runMs: 5000 },
+    { id: 'dailyProgressAudit1', module: 'dailyProgress', target: '/xz/restaurant_vitality', nav: '今日活跃', slot: '14:00', jitterMin: 0, jitterMax: 3, runOnce: true, runMs: 5000 },
+    { id: 'dailyProgressAudit2', module: 'dailyProgress', target: '/xz/restaurant_vitality', nav: '今日活跃', slot: '18:00', jitterMin: 0, jitterMax: 3, runOnce: true, runMs: 5000 },
+    { id: 'dailyProgressAudit3', module: 'dailyProgress', target: '/xz/restaurant_vitality', nav: '今日活跃', slot: '22:00', jitterMin: 0, jitterMax: 3, runOnce: true, runMs: 5000 },
     { id: 'dailyNpc', module: 'dailyNpc', target: '/xz/god', nav: '食神', route: [{ text: '食神', href: '/xz/god' }], slot: '7:50', jitterMin: 0, jitterMax: 5, runOnce: true, runMs: 45000 },
     { id: 'dailyBar', module: 'dailyBar', target: '/xz/bar', nav: '广场', route: [{ text: '广场', href: '/xz/square' }, { text: '酒吧', href: '/xz/bar' }], slot: '10:05', jitterMin: 0, jitterMax: 3, runOnce: true, runMs: 180000, condition: () => hasDailyProjectRemaining(['number', 'fist', 'cup']) },
     // 高次数无体力项目分散补跑：避开整点菜场与每小时31分沾光，完成后当天剩余轮次自动消失。
