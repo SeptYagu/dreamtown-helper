@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.72 metadata and shared panel version", "// @version      3.72" in text and "const SCRIPT_VERSION = '3.72';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.73 metadata and shared panel version", "// @version      3.73" in text and "const SCRIPT_VERSION = '3.73';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -125,6 +125,7 @@ require("router yields plan modules", "由 AutoPilot 独占，Router 不重复�
 require("router does not mark action-in-progress complete", "仍有后续动作，不写完成标志" in text)
 require("autopilot food coupon route is real", "{ module: 'foodCoupon', navSteps: [{ text: '仓库'," in text)
 require("autopilot includes market purchase", "{ module: 'market',     navSteps: [{ text: '菜场'," in text)
+require("autopilot includes independent market reservation", "{ module: 'marketReserve', navSteps: [{ text: '菜场'," in text)
 require("autopilot includes merged NPC visits from food god", "{ module: 'dailyNpc',   navSteps: [{ text: '食神'," in text)
 require("autopilot includes daily friend projects", "{ module: 'dailyFriend', navSteps: [{ text: '好友'," in text)
 require("autopilot includes daily bar projects", "{ module: 'dailyBar',   navSteps: [{ text: '广场'," in text)
@@ -224,6 +225,21 @@ require("market claim remains in progress across refresh", "Utils.click(reserveC
 market_run = text[text.index("MOD.market = {"):text.index("// ----- 7. 食材券")]
 require("market explicitly completes when no purchase remains", "市场: 无常驻菜" in market_run and "市场: 常驻菜全部达标" in market_run and market_run.count("return true;") >= 5)
 require("market purchase remains in progress across refresh", "Utils.click(foodToBuy.buyButton);" in market_run and "return false;" in market_run)
+
+reserve_start = text.index("  MOD.marketReserve = {")
+reserve_end = text.index("  // ----- 7. 食材券", reserve_start)
+reserve = text[reserve_start:reserve_end]
+require("reservation is an independent default-on module", "{ id: 'marketReserve', label: '食材预定', default: true" in text and "requiresScheduled: true" in reserve)
+require("reservation handles real market and reserve pages", "p === '/xz/market'" in reserve and "food_reserve(?:_\\d+_\\d+_\\d+)?" in reserve)
+require("reservation claims one arrived item per refresh", "a[onclick^='getFoodReserve']" in reserve and "Utils.click(arrived.action);" in reserve and "已领取" in reserve)
+require("reservation uses only real reserve links and fixed quantity one", "a[href=\"/xz/food_reserve\"]" in reserve and "reserve(${selectedId},1)" in reserve and "Utils.click(confirm);" in reserve)
+require("reservation scans real level categories two through five", "parseCatalogLevel(currentLevel)" in reserve and "findCategoryLink(currentLevel + 1)" in reserve and "currentLevel < 5" in reserve)
+require("reservation auto order is stock asc then level desc", "Number(a.stock) - Number(b.stock)" in reserve and "Number(b.level) - Number(a.level)" in reserve)
+require("reservation excludes the other active food", "const excluded = new Set((state.activeIds || []).map(Number));" in reserve and "!excluded.has(Number(food.id))" in reserve)
+require("reservation persists logical slot assignments across DOM compaction", "food_reserve_assignments" in reserve and "逻辑槽" in reserve and "reconcileAssignments(activeIds)" in reserve)
+require("reservation parses page duration and stabilizes one-to-five minute jitter", "parseDurationMs(text)" in reserve and "Utils.randMs(60, 300)" in reserve and "food_reserve_earliest_due" in reserve)
+require("reservation panel has two preferences and prevents duplicates", "dxzxx-reserve-pref-1" in text and "dxzxx-reserve-pref-2" in text and "避免重复" in text and "other.value = 'auto';" in text)
+require("reservation dropdown labels include learned inventory", "food_reserve_catalog" in text and "（库存${Number(food.stock)}）" in text)
 require("router respects explicit in-progress result", "(!inPlan && completed !== false)" in text)
 require("facility threshold restored to 5", "MIN_COUNT: 5" in text)
 facility_run = text[text.index("MOD.facility = {"):text.index("// ----- 5. 食材采购")]
@@ -331,6 +347,7 @@ require("daily luck checks every hour at minute 31", "id: 'dailyLuckHourly', mod
 require("daily luck catches up only current hour", "sched_dailyLuckHourly_lastRun" in dynamic and "ranThisHour" in dynamic and "nowMs + 5000" in dynamic and "dailyLuck1031" not in dynamic and "dailyLuck1131" not in dynamic)
 require("daily luck keeps hourly checks until both jobs finish", "ownGiftDone" in dynamic and "luck_verified_day" in dynamic and "&& ownGiftDone" in dynamic and "target: '/xz/'" in dynamic)
 require("food compound is chained after every completed meal", "id: 'foodCompoundAfterEnergy', module: 'foodCompound'" in dynamic and "energyLast > compoundLast" in dynamic and "chainedOnly: true" in dynamic)
+require("reservation scheduler follows persisted earliest arrival", "id: 'marketReserve', module: 'marketReserve'" in dynamic and "food_reserve_next_at" in dynamic and "stored > nowMs ? stored : nowMs + 5000" in dynamic)
 require("friend daily projects are chained after lunch", "id: 'dailyFriendAfterLunch', module: 'dailyFriend'" in dynamic and "sched_energy_lunch_lastRun" in dynamic and "lunchLast > friendLast" in dynamic and "chainedOnly: true" in dynamic)
 require("lunch launches friend before compound", "energyWindow === 1 && isEnabled('dailyFriend')" in text and text.index("void this.fireToTarget(friendEntry);") < text.index("void this.fireToTarget(compoundEntry);") and "好友每日项目完成，开始午饭后食材合成" in text)
 require("breakfast and dinner still launch compound directly", "phase.id === 'energy' || phase.id === 'dailyFriendAfterLunch'" in text and "void this.fireToTarget(compoundEntry);" in text)
@@ -346,7 +363,7 @@ require("autopilot mailbox is immediately after restaurant", restaurant_plan < m
 autopilot_plan = text[text.index("  const AutoPilot = {"):text.index("    stateKey: 'autopilot_state'")]
 autopilot_modules = re.findall(r"\{ module: '([^']+)'", autopilot_plan)
 require("autopilot moves restaurant to step 2 and mailbox to step 3", autopilot_modules[:4] == ['signIn', 'restaurant', 'mailbox', 'wish'])
-require("autopilot merges food god into NPC and includes luck in daily projects", len(autopilot_modules) == 22 and autopilot_modules[4:12] == ['box', 'foodCoupon', 'market', 'dailyNpc', 'dailyFriend', 'dailyBar', 'dailyLuck', 'extraWish'] and 'god' not in autopilot_modules)
+require("autopilot merges food god into NPC and includes luck in daily projects", len(autopilot_modules) == 23 and autopilot_modules[4:13] == ['box', 'foodCoupon', 'market', 'marketReserve', 'dailyNpc', 'dailyFriend', 'dailyBar', 'dailyLuck', 'extraWish'] and 'god' not in autopilot_modules)
 energy_index = autopilot_modules.index('energy')
 require("autopilot puts food compound immediately after energy", autopilot_modules[energy_index:energy_index + 2] == ['energy', 'foodCompound'])
 require("autopilot ends with seasonal activities, vitality, then achievement", autopilot_modules[-4:] == ['season', 'egg', 'vitality', 'achievement'])

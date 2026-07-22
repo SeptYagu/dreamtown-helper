@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.72
+// @name         梦想小镇日常一体化 v3.73
 // @namespace    http://tampermonkey.net/
-// @version      3.72
-// @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋/成就
+// @version      3.73
+// @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材预定/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋/成就
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
 // @updateURL    https://raw.githubusercontent.com/SeptYagu/dreamtown-helper/main/%E6%A2%A6%E6%83%B3%E5%B0%8F%E9%95%87%E6%97%A5%E5%B8%B8%E4%B8%80%E4%BD%93%E5%8C%96.meta.js
@@ -15,6 +15,11 @@
 // ==/UserScript==
 
 /*
+ * v3.73 变更（2026-07-22 食材自动预定）
+ * - 新增独立“食材预定”模块：领取两个到货槽位后，固定以数量1补满两个预定
+ * - 面板提供两个食材偏好下拉；自动模式按库存升序、同库存等级降序选择，并排除另一槽已预定食材
+ * - 逐页真实点击2至5级库存分类，读取页面实际预计/剩余时间；长期调度按最早到货再加1至5分钟执行
+ *
  * v3.72 变更（2026-07-22 守护者续战、菜场保底与到访礼物）
  * - 守护者补货未确认或按钮暂缺时保持当前阶段并复核，只有页面明确显示挑战完成才结束
  * - 普通2级菜价格高于2650但库存低于100时紧急购买300个；原限价补到950及鸡肉/猪肉规则保留
@@ -346,7 +351,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.72';
+  const SCRIPT_VERSION = '3.73';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -485,6 +490,7 @@
     { id: 'extraWish',   label: '额外许愿项目', default: true, schedule: 'daily-project', hidden: true },
     { id: 'vitality',    label: '今日活跃领奖', default: true, schedule: 'reward-twice' },
     { id: 'achievement', label: '成就领取', default: true, schedule: 'daily' },
+    { id: 'marketReserve', label: '食材预定', default: true, schedule: 'reservation' },
     // —— 付费模块：在 PLAN 内，但默认关闭 ——
     { id: 'market',     label: '食材采购(整点)', default: false, schedule: 'hourly' },  // 花钱
   ];
@@ -494,6 +500,8 @@
     if (Utils.gget(`mod_${m.id}_enabled`, null) === null) Utils.gset(`mod_${m.id}_enabled`, m.default);
   });
   if (Utils.gget('mod_dailyProjects_enabled', null) === null) Utils.gset('mod_dailyProjects_enabled', true);
+  if (Utils.gget('food_reserve_pref_1', null) === null) Utils.gset('food_reserve_pref_1', 'auto');
+  if (Utils.gget('food_reserve_pref_2', null) === null) Utils.gset('food_reserve_pref_2', 'auto');
 
   const isEnabled = (id) => {
     if (['dailyFriend', 'dailyBar', 'dailyNpc', 'dailyLuck', 'extraWish'].includes(id)) {
@@ -620,6 +628,20 @@
       return `🦌 梦想小镇日常 v${SCRIPT_VERSION}${stepHtml}<span class="self-restaurant-id">${idText}</span>`;
     },
 
+    reserveOptionsHtml(selected = 'auto') {
+      const esc = (value) => String(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+      const catalog = Utils.gget('food_reserve_catalog', []);
+      const foods = Array.isArray(catalog) ? catalog.slice().sort((a, b) =>
+        Number(a.level) - Number(b.level) || String(a.name).localeCompare(String(b.name), 'zh-CN')
+      ) : [];
+      const options = [`<option value="auto"${selected === 'auto' ? ' selected' : ''}>不指定（自动：库存低优先）</option>`];
+      foods.forEach(food => {
+        const value = String(food.id);
+        options.push(`<option value="${esc(value)}"${String(selected) === value ? ' selected' : ''}>[${Number(food.level)}级]${esc(food.name)}（库存${Number(food.stock)}）</option>`);
+      });
+      return options.join('');
+    },
+
     create() {
       if (document.getElementById('dxzxx-panel')) return;
       GM_addStyle(`
@@ -686,6 +708,13 @@
                 <option value="金牌4级">升级到金牌4级</option>
                 <option value="金牌5级">升级到金牌5级</option>
               </select>
+            </details>
+            <details open id="dxzxx-reserve-config">
+              <summary>食材预定配置<span class="summary-note">固定数量1；自动按库存低、等级高</span></summary>
+              <div class="label">预定位1</div>
+              <select id="dxzxx-reserve-pref-1">${this.reserveOptionsHtml(String(Utils.gget('food_reserve_pref_1', 'auto')))}</select>
+              <div class="label">预定位2</div>
+              <select id="dxzxx-reserve-pref-2">${this.reserveOptionsHtml(String(Utils.gget('food_reserve_pref_2', 'auto')))}</select>
             </details>
             <div class="panel-actions">
               <button class="run-btn" id="dxzxx-run">▶ 立即执行本页</button>
@@ -865,6 +894,26 @@
           Utils.showStatus('食谱', `目标等级 → ${recipeLevel.value}`, '#4CAF50');
         });
       }
+
+      // 食材预定偏好：两个位置不能同时指定同一种；冲突时保留刚改的项，另一项退回自动。
+      [1, 2].forEach(slot => {
+        const select = panel.querySelector(`#dxzxx-reserve-pref-${slot}`);
+        if (!select) return;
+        select.addEventListener('change', () => {
+          const otherSlot = slot === 1 ? 2 : 1;
+          const other = panel.querySelector(`#dxzxx-reserve-pref-${otherSlot}`);
+          Utils.gset(`food_reserve_pref_${slot}`, select.value);
+          if (select.value !== 'auto' && other?.value === select.value) {
+            other.value = 'auto';
+            Utils.gset(`food_reserve_pref_${otherSlot}`, 'auto');
+            Utils.showStatus('食材预定', `预定位${otherSlot}已改为自动，避免重复`, '#FF9800');
+          } else {
+            Utils.showStatus('食材预定', `预定位${slot}偏好已保存`, '#4CAF50');
+          }
+          Utils.gset('sched_marketReserve_nextAt', 0);
+          if (Scheduler.isOn()) { Scheduler.computeAll(); Scheduler.scheduleNext(); }
+        });
+      });
 
       panel.querySelector('#dxzxx-run').addEventListener('click', () => {
         Utils.gset('operation_stopped', false);
@@ -1642,6 +1691,273 @@
       input.setAttribute('value', String(amount));
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
+    },
+  };
+
+  // ----- 6. 食材预定（两个逻辑槽；数量固定1；最早到货动态调度）-----
+  // 游戏领取后会把剩余记录向前压缩，因此不能把DOM顺序当固定槽号。
+  // assignments持久记录“逻辑槽 → 食材ID”，到货领取后只释放对应槽。
+  MOD.marketReserve = {
+    match: (p) => p === '/xz/market' || /^\/xz\/food_reserve(?:_\d+_\d+_\d+)?$/.test(p),
+    schedule: 'reservation',
+    requiresScheduled: true,
+    maxPhaseAgeMs: 5 * 60000,
+    SCAN_KEY: 'food_reserve_scan_state',
+    ASSIGN_KEY: 'food_reserve_assignments',
+
+    parseReservations() {
+      return Array.from(document.querySelectorAll('p')).map(p => {
+        const action = p.querySelector("a[onclick^='getFoodReserve'], a[onclick^='showDeleteReserve']");
+        if (!action) return null;
+        const text = (p.textContent || '').replace(/\s+/g, ' ').trim();
+        const food = text.match(/\[(\d+)级\](.+?)×(\d+)/);
+        const id = Number((action.getAttribute('onclick') || '').match(/\((\d+)\)/)?.[1] || 0);
+        if (!food || !id) return null;
+        const arrived = (action.getAttribute('onclick') || '').startsWith('getFoodReserve');
+        return {
+          id,
+          level: Number(food[1]),
+          name: food[2].trim(),
+          quantity: Number(food[3]),
+          arrived,
+          remainingMs: arrived ? 0 : this.parseDurationMs(text),
+          action,
+        };
+      }).filter(Boolean);
+    },
+
+    parseDurationMs(text) {
+      const source = String(text || '');
+      const day = Number(source.match(/(\d+)天/)?.[1] || 0);
+      const hour = Number(source.match(/(\d+)小时/)?.[1] || 0);
+      const minute = Number(source.match(/(\d+)分/)?.[1] || 0);
+      const second = Number(source.match(/(\d+)秒/)?.[1] || 0);
+      const total = (((day * 24 + hour) * 60 + minute) * 60 + second) * 1000;
+      return total > 0 ? total : null;
+    },
+
+    reconcileAssignments(activeIds) {
+      const raw = Utils.gget(this.ASSIGN_KEY, {});
+      const assignments = raw && typeof raw === 'object' ? { ...raw } : {};
+      [1, 2].forEach(slot => {
+        const id = Number(assignments[String(slot)] || 0);
+        if (!id || !activeIds.includes(id)) delete assignments[String(slot)];
+      });
+
+      const assigned = new Set(Object.values(assignments).map(Number));
+      // 对升级前已经存在的预定，先按显式偏好认领，再按页面顺序填剩余逻辑槽。
+      activeIds.filter(id => !assigned.has(id)).forEach(id => {
+        const preferredSlot = [1, 2].find(slot =>
+          !assignments[String(slot)] && String(Utils.gget(`food_reserve_pref_${slot}`, 'auto')) === String(id)
+        );
+        const freeSlot = preferredSlot || [1, 2].find(slot => !assignments[String(slot)]);
+        if (freeSlot) assignments[String(freeSlot)] = id;
+      });
+      Utils.gset(this.ASSIGN_KEY, assignments);
+      return assignments;
+    },
+
+    updateNextFromReservations(reservations) {
+      const nowMs = Utils.getServerTime().getTime();
+      const waits = reservations.filter(r => !r.arrived && r.remainingMs !== null);
+      if (waits.length === 0) {
+        Utils.gset('food_reserve_next_at', nowMs + 5000);
+        Utils.gset('food_reserve_earliest_due', 0);
+        return nowMs + 5000;
+      }
+      const earliestDue = Math.min(...waits.map(r => nowMs + r.remainingMs));
+      const previousDue = Number(Utils.gget('food_reserve_earliest_due', 0) || 0);
+      let nextAt = Number(Utils.gget('food_reserve_next_at', 0) || 0);
+      // 同一倒计时每次刷新会自然缩短，允许60秒误差；不能每次重抽抖动而不断漂移。
+      if (!nextAt || Math.abs(previousDue - earliestDue) > 60000) {
+        nextAt = earliestDue + Utils.randMs(60, 300);
+      }
+      Utils.gset('food_reserve_earliest_due', earliestDue);
+      Utils.gset('food_reserve_next_at', nextAt);
+      return nextAt;
+    },
+
+    parseCatalogLevel(level) {
+      const pattern = new RegExp(`^/xz/food_reserve_${level}_(\\d+)_1$`);
+      return Array.from(document.querySelectorAll('a[href]')).map(a => {
+        const href = a.getAttribute('href') || '';
+        const route = href.match(pattern);
+        const label = (a.textContent || '').trim().match(/^(.+)\((\d+)\)$/);
+        // “选择经常预定”会带[等级]前缀，不属于当前分类库存清单。
+        if (!route || !label || label[1].startsWith('[')) return null;
+        return { id: Number(route[1]), level, name: label[1].trim(), stock: Number(label[2]), href };
+      }).filter(Boolean);
+    },
+
+    findCategoryLink(level) {
+      const pattern = new RegExp(`^/xz/food_reserve_${level}_\\d+_1$`);
+      return Array.from(document.querySelectorAll('a[href]')).find(a =>
+        (a.textContent || '').trim() === `${level}级` && pattern.test(a.getAttribute('href') || '')
+      );
+    },
+
+    chooseFood(catalog, state) {
+      const excluded = new Set((state.activeIds || []).map(Number));
+      const available = catalog.filter(food => !excluded.has(Number(food.id)));
+      const preferred = String(Utils.gget(`food_reserve_pref_${state.targetSlot}`, 'auto'));
+      if (preferred !== 'auto') {
+        const exact = available.find(food => String(food.id) === preferred);
+        if (exact) return exact;
+        Utils.warn(`食材预定: 预定位${state.targetSlot}指定食材不可用或与另一槽重复，改用自动选择`);
+      }
+      return available.sort((a, b) =>
+        Number(a.stock) - Number(b.stock) ||
+        Number(b.level) - Number(a.level) ||
+        Number(a.id) - Number(b.id)
+      )[0] || null;
+    },
+
+    async run() {
+      const path = location.pathname;
+      if (path === '/xz/market') {
+        const reservations = this.parseReservations();
+        const activeIds = reservations.map(r => r.id);
+        const assignments = this.reconcileAssignments(activeIds);
+
+        const arrived = reservations.find(r => r.arrived);
+        if (arrived) {
+          Utils.gset('food_reserve_next_at', Utils.getServerTime().getTime() + 5000);
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(arrived.action);
+          Utils.log(`食材预定: 已领取 [${arrived.level}级]${arrived.name}×${arrived.quantity}`);
+          return false;
+        }
+
+        if (reservations.length >= 2) {
+          const nextAt = this.updateNextFromReservations(reservations);
+          Utils.gset(this.SCAN_KEY, null);
+          Utils.log(`食材预定: 两个位置均在途中，下次 ${new Date(nextAt).toLocaleTimeString()} 复查`);
+          return true;
+        }
+
+        const targetSlot = [1, 2].find(slot => !assignments[String(slot)]);
+        const reserveLink = Array.from(document.querySelectorAll('a[href="/xz/food_reserve"]')).find(a =>
+          /立即预定|食材预定/.test((a.textContent || '').trim())
+        );
+        if (!targetSlot || !reserveLink) {
+          Utils.warn('食材预定: 有空位但未找到真实“立即预定”入口，5分钟后复查');
+          Utils.gset('food_reserve_next_at', Utils.getServerTime().getTime() + 5 * 60000);
+          return true;
+        }
+        Utils.gset(this.SCAN_KEY, {
+          active: true,
+          targetSlot,
+          activeIds,
+          catalog: {},
+          selectedId: null,
+          startedAt: Date.now(),
+        });
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(reserveLink);
+        Utils.log(`食材预定: 预定位${targetSlot}空闲，进入真实预定页扫描库存`);
+        return false;
+      }
+
+      let state = Utils.gget(this.SCAN_KEY, null);
+      if (!state?.active || Date.now() - Number(state.startedAt || 0) > 4 * 60000) {
+        Utils.warn('食材预定: 扫描状态缺失或过期，返回菜场重新确认两个位置');
+        Utils.gset(this.SCAN_KEY, null);
+        const back = document.querySelector('a[href="/xz/market"]');
+        if (back) { await Utils.sleep(Utils.randMs(1, 2)); Utils.click(back); return false; }
+        return true;
+      }
+
+      const currentLevel = Number(path.match(/^\/xz\/food_reserve_(\d+)_/)?.[1] || 2);
+      this.parseCatalogLevel(currentLevel).forEach(food => { state.catalog[String(food.id)] = food; });
+
+      if (state.selectedId) {
+        const selectedId = Number(state.selectedId);
+        const confirm = Array.from(document.querySelectorAll("a[onclick^='reserve']")).find(a =>
+          (a.getAttribute('onclick') || '').replace(/\s/g, '') === `reserve(${selectedId},1)`
+        );
+        if (confirm) {
+          const selected = state.catalog[String(selectedId)];
+          const expectedMs = this.parseDurationMs(document.body.textContent || '');
+          const assignments = Utils.gget(this.ASSIGN_KEY, {}) || {};
+          assignments[String(state.targetSlot)] = selectedId;
+          Utils.gset(this.ASSIGN_KEY, assignments);
+          if (expectedMs) {
+            Utils.gset('food_reserve_next_at', Utils.getServerTime().getTime() + expectedMs + Utils.randMs(60, 300));
+          }
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(confirm);
+          Utils.log(`食材预定: 预定位${state.targetSlot}确认 [${selected?.level || '?'}级]${selected?.name || selectedId}×1，预计时长 ${expectedMs ? Math.round(expectedMs / 60000) + '分钟' : '待菜场页校准'}`);
+          return false;
+        }
+
+        const selected = state.catalog[String(selectedId)];
+        const selectedLink = selected && document.querySelector(`a[href="${selected.href}"]`);
+        if (selectedLink) {
+          Utils.gset(this.SCAN_KEY, state);
+          await Utils.sleep(Utils.randMs(1, 2));
+          Utils.click(selectedLink);
+          Utils.log(`食材预定: 点击真实食材链接 [${selected.level}级]${selected.name}`);
+          return false;
+        }
+        if (selected) {
+          const category = this.findCategoryLink(selected.level);
+          if (category) {
+            Utils.gset(this.SCAN_KEY, state);
+            await Utils.sleep(Utils.randMs(1, 2));
+            Utils.click(category);
+            Utils.log(`食材预定: 切换到${selected.level}级查找指定食材`);
+            return false;
+          }
+        }
+        Utils.warn('食材预定: 已选食材的真实链接消失，5分钟后重新扫描');
+        Utils.gset(this.SCAN_KEY, null);
+        Utils.gset('food_reserve_next_at', Utils.getServerTime().getTime() + 5 * 60000);
+        return true;
+      }
+
+      if (currentLevel < 5) {
+        const nextCategory = this.findCategoryLink(currentLevel + 1);
+        if (!nextCategory) {
+          Utils.warn(`食材预定: 找不到真实${currentLevel + 1}级分类入口，5分钟后重试`);
+          Utils.gset('food_reserve_next_at', Utils.getServerTime().getTime() + 5 * 60000);
+          return true;
+        }
+        Utils.gset(this.SCAN_KEY, state);
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(nextCategory);
+        Utils.log(`食材预定: ${currentLevel}级库存已读取，真实点击${currentLevel + 1}级`);
+        return false;
+      }
+
+      const catalog = Object.values(state.catalog).filter(food => food && food.id);
+      Utils.gset('food_reserve_catalog', catalog);
+      const chosen = this.chooseFood(catalog, state);
+      if (!chosen) {
+        Utils.warn('食材预定: 没有可用且不重复的食材，30分钟后复查');
+        Utils.gset(this.SCAN_KEY, null);
+        Utils.gset('food_reserve_next_at', Utils.getServerTime().getTime() + 30 * 60000);
+        return true;
+      }
+      state.selectedId = chosen.id;
+      Utils.gset(this.SCAN_KEY, state);
+      const chosenLink = document.querySelector(`a[href="${chosen.href}"]`);
+      if (chosenLink) {
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(chosenLink);
+        Utils.log(`食材预定: 自动选择 [${chosen.level}级]${chosen.name}(库存${chosen.stock})`);
+        return false;
+      }
+      const chosenCategory = this.findCategoryLink(chosen.level);
+      if (chosenCategory) {
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(chosenCategory);
+        Utils.log(`食材预定: 全局选择 [${chosen.level}级]${chosen.name}，切回对应分类`);
+        return false;
+      }
+      Utils.warn('食材预定: 全局候选存在但找不到真实分类链接，5分钟后重试');
+      Utils.gset(this.SCAN_KEY, null);
+      Utils.gset('food_reserve_next_at', Utils.getServerTime().getTime() + 5 * 60000);
+      return true;
     },
   };
 
@@ -3820,6 +4136,16 @@
       },
     },
 
+    // 食材预定：按页面最早到货倒计时 + 1至5分钟复查；首次/过期时立即检查。
+    {
+      id: 'marketReserve', module: 'marketReserve', target: '/xz/market', nav: '菜场', route: [{ text: '菜场', href: '/xz/market' }], runMs: 300000,
+      computeNext() {
+        const nowMs = Utils.getServerTime().getTime();
+        const stored = Number(Utils.gget('food_reserve_next_at', 0) || 0);
+        return stored > nowMs ? stored : nowMs + 5000;
+      },
+    },
+
     // 餐厅：17-45min 随机循环（页面状态随机：蟑螂可能随时出，翻柜随机）
     {
       id: 'restaurant', module: 'restaurant', target: '/xz/restaurant', nav: '餐厅', route: [{ href: '/xz/restaurant' }], runMs: 30000,
@@ -4388,6 +4714,7 @@
                                          { text: '开宝箱',              hrefMatch: '/xz/box' }] },
       { module: 'foodCoupon', navSteps: [{ text: '仓库',                hrefMatch: '/xz/warehouse' }] },
       { module: 'market',     navSteps: [{ text: '菜场',                hrefMatch: '/xz/market' }] },
+      { module: 'marketReserve', navSteps: [{ text: '菜场',             hrefMatch: '/xz/market' }] },
       { module: 'dailyNpc',   navSteps: [{ text: '食神',                hrefMatch: '/xz/god' }] },
       { module: 'dailyFriend', navSteps: [{ text: '好友',               hrefMatch: '/xz/friend' }] },
       { module: 'dailyBar',   navSteps: [{ text: '广场',                hrefMatch: '/xz/square' },
