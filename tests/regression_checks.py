@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.79 metadata and shared panel version", "// @version      3.79" in text and "const SCRIPT_VERSION = '3.79';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.80 metadata and shared panel version", "// @version      3.80" in text and "const SCRIPT_VERSION = '3.80';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -156,7 +156,12 @@ require("guardian ignores casual manual store browsing", "requiresScheduled: tru
 require("guardian completes only from explicit page evidence", "isExplicitlyComplete()" in guardian_block and "页面已明确确认今日挑战完成" in guardian_block and "未找到单发按钮且页面没有明确完成文字" in guardian_block)
 require("guardian transient failures remain in progress", "retryCurrentPage(reason" in guardian_block and "本轮不记完成" in guardian_block and "购买未确认，安全停止" not in guardian_block and "本轮安全结束" not in guardian_block)
 require("guardian can return once stock reaches battle threshold", "thresholdVerified: true" in guardian_block and "购买后库存已达到战斗阈值" in guardian_block and "同页库存已达到战斗阈值" in guardian_block)
-require("egg action returns in-progress", "扭蛋: 已扭" in text and "return false;" in text)
+egg_start = text.index("  MOD.egg = {")
+egg_end = text.index("  // ----- 成就领取", egg_start)
+egg = text[egg_start:egg_end]
+require("egg action returns in-progress", "扭蛋: 已扭" in egg and "return false;" in egg)
+require("egg claims real cumulative rewards before spinning", "a[onclick^='getEggAward']" in egg and "a.textContent.trim() === '领取'" in egg and r"/累积\s*\d+\s*次/" in egg and r"/^getEggAward\(\d+\);?$/" in egg and egg.index("const cumulativeBtns") < egg.index("const spinBtn"))
+require("egg cumulative claim refreshes one item at a time", "cumulativeBtns[0]" in egg and "领取本页第一项累积奖励" in egg and egg.index("Utils.click(cumulativeBtns[0])") < egg.index("return false;", egg.index("Utils.click(cumulativeBtns[0])")))
 
 achievement_start = text.index("  MOD.achievement = {")
 achievement_end = text.index("  // ==================== 任务穷举表", achievement_start)

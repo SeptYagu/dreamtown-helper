@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.79
+// @name         梦想小镇日常一体化 v3.80
 // @namespace    http://tampermonkey.net/
-// @version      3.79
+// @version      3.80
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材预定/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋/成就
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.80 变更（2026-07-22 扭蛋累积奖励）
+ * - 扭蛋模块新增累积次数奖励领取，精确点击“累积N次”行内的真实getEggAward(N)领取链接
+ * - 每次只领第一项并刷新继续，领完所有已达成档位后再继续扭蛋或正常结束
+ *
  * v3.79 变更（2026-07-22 本地加载桥端到端验证）
  * - 不改动功能逻辑；仅更新发布文件，验证页面重载可直接读取新版且无需再次安装加载桥
  *
@@ -376,7 +380,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.79';
+  const SCRIPT_VERSION = '3.80';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -3784,13 +3788,12 @@
     },
   };
 
-  // ----- 14. 扭蛋（每日任务 + 实际扭）-----
+  // ----- 14. 扭蛋（每日任务 + 累积奖励 + 实际扭）-----
   MOD.egg = {
     match: (p) => p === '/xz/activity_egg',
     schedule: 'daily',
     async run() {
       // 14.1 任务领奖: getEggTicket(0) — 在任务行末尾 "领取[扭蛋券]×1"
-      // 注意: 页面上有装饰性 emoji <a onclick="getEggAward(N)"> 不要误用
       const ticketBtns = Array.from(document.querySelectorAll("a[onclick^='getEggTicket']"));
       // 排除已领取（已领取的任务行不会显示领取链接），未达成的也不会显示
       if (ticketBtns.length > 0) {
@@ -3800,7 +3803,23 @@
         return false;
       }
 
-      // 14.2 实际扭蛋: getEgg() 文本"扭蛋"
+      // 14.2 累积奖励: 只点“累积N次”行内文字为“领取”的真实getEggAward(N)链接。
+      // 历史页面曾把相同函数用于装饰元素，因此同时约束文本、父行和onclick格式。
+      const cumulativeBtns = Array.from(document.querySelectorAll("a[onclick^='getEggAward']")).filter(a => {
+        const onclick = (a.getAttribute('onclick') || '').trim();
+        const rowText = a.closest('p')?.textContent || '';
+        return a.textContent.trim() === '领取'
+          && /累积\s*\d+\s*次/.test(rowText)
+          && /^getEggAward\(\d+\);?$/.test(onclick);
+      });
+      if (cumulativeBtns.length > 0) {
+        await Utils.sleep(Utils.randMs(1, 2));
+        Utils.click(cumulativeBtns[0]);
+        Utils.log(`扭蛋: 领取本页第一项累积奖励（共 ${cumulativeBtns.length} 项）`);
+        return false;
+      }
+
+      // 14.3 实际扭蛋: getEgg() 文本"扭蛋"
       const spinBtn = Array.from(document.querySelectorAll('a')).find(a =>
         (a.getAttribute('onclick') || '') === 'getEgg()'
       );
