@@ -366,7 +366,7 @@
  *   2. 每步 ≥ 600ms 间隔
  *   3. 不并发多页面
  *   4. 不构造链接 / 不直接 API（Scheduler / AutoPilot 仅通过点击真实 <a> 元素的 href 跳转）
- *   5. 按钮位置见 <LOCAL_HANDOFF>
+ *   5. 按钮位置见本机 handoff 文档（不提交公开仓库）
  */
 
 (function () {
