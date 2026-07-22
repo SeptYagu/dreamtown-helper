@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.78
+// @name         梦想小镇日常一体化 v3.79
 // @namespace    http://tampermonkey.net/
-// @version      3.78
+// @version      3.79
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材预定/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋/成就
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,9 @@
 // ==/UserScript==
 
 /*
+ * v3.79 变更（2026-07-22 本地加载桥端到端验证）
+ * - 不改动功能逻辑；仅更新发布文件，验证页面重载可直接读取新版且无需再次安装加载桥
+ *
  * v3.78 变更（2026-07-22 本地跟踪发布验证）
  * - 不改动功能逻辑；验证通过固定本地发布文件自动更新Tampermonkey，同时继续提交并推送GitHub
  *
@@ -373,7 +376,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.78';
+  const SCRIPT_VERSION = '3.79';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
