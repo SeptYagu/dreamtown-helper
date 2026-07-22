@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         梦想小镇日常一体化 v3.73
+// @name         梦想小镇日常一体化 v3.74
 // @namespace    http://tampermonkey.net/
-// @version      3.73
+// @version      3.74
 // @description  全自动日常 + 任务穷举调度器：签到/许愿/吃饭/设施/食神/市场/食材预定/食材券/礼包/餐厅/系统邮箱/宝箱/食谱/守护者/季节签到/扭蛋/成就
 // @author       yaguyagu
 // @match        https://xx.xlu233.com/xz/*
@@ -15,6 +15,10 @@
 // ==/UserScript==
 
 /*
+ * v3.74 变更（2026-07-22 面板预定区压缩）
+ * - 删除两个食材预定下拉上方重复的“预定位1/2”小字，缩短左栏高度
+ * - 本页执行、全套运行、总停止三个全局按钮移到右栏调度器下方，利用空位并保持按钮固定排列
+ *
  * v3.73 变更（2026-07-22 食材自动预定）
  * - 新增独立“食材预定”模块：领取两个到货槽位后，固定以数量1补满两个预定
  * - 面板提供两个食材偏好下拉；自动模式按库存升序、同库存等级降序选择，并排除另一槽已预定食材
@@ -351,7 +355,7 @@
   window.__DXZXX_LOADED__ = true;
 
   const NS = 'dxzxx_';
-  const SCRIPT_VERSION = '3.73';
+  const SCRIPT_VERSION = '3.74';
   const MIN_STEP_MS = 600;
   const REFRESH_HOUR = 7;       // 服务器日重置时间（原脚本统一为 7:30 ± 15min）
   const REFRESH_MIN = 30;
@@ -711,16 +715,9 @@
             </details>
             <details open id="dxzxx-reserve-config">
               <summary>食材预定配置<span class="summary-note">固定数量1；自动按库存低、等级高</span></summary>
-              <div class="label">预定位1</div>
               <select id="dxzxx-reserve-pref-1">${this.reserveOptionsHtml(String(Utils.gget('food_reserve_pref_1', 'auto')))}</select>
-              <div class="label">预定位2</div>
               <select id="dxzxx-reserve-pref-2">${this.reserveOptionsHtml(String(Utils.gget('food_reserve_pref_2', 'auto')))}</select>
             </details>
-            <div class="panel-actions">
-              <button class="run-btn" id="dxzxx-run">▶ 立即执行本页</button>
-              <button class="run-btn" id="dxzxx-autopilot" style="background:#FF9800;color:#000;">🚀 立即跑一轮全套</button>
-              <button class="run-btn" id="dxzxx-stop" style="background:#f44;color:#fff;">⏹ 停止当前操作</button>
-            </div>
           </div>
           <div class="panel-column">
             <details open id="dxzxx-sched-wrap">
@@ -734,6 +731,11 @@
                 </div>
               </div>
             </details>
+            <div class="panel-actions" id="dxzxx-global-actions">
+              <button class="run-btn" id="dxzxx-run">▶ 立即执行本页</button>
+              <button class="run-btn" id="dxzxx-autopilot" style="background:#FF9800;color:#000;">🚀 立即跑一轮全套</button>
+              <button class="run-btn" id="dxzxx-stop" style="background:#f44;color:#fff;">⏹ 停止当前操作</button>
+            </div>
           </div>
         </div>
         <details open>

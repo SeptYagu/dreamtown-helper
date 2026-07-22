@@ -15,7 +15,7 @@ def require(name: str, condition: bool) -> None:
     print(f"PASS: {name}")
 
 
-require("v3.73 metadata and shared panel version", "// @version      3.73" in text and "const SCRIPT_VERSION = '3.73';" in text and "v${SCRIPT_VERSION}" in text)
+require("v3.74 metadata and shared panel version", "// @version      3.74" in text and "const SCRIPT_VERSION = '3.74';" in text and "v${SCRIPT_VERSION}" in text)
 require("panel registers at document start", "// @run-at       document-start" in text)
 require("panel reveals only after scheduler is forced open", "panel.style.visibility = 'hidden';" in text and text.count("schedWrap.open = true;") >= 2 and "panel.style.visibility = 'visible';" in text and "requestAnimationFrame(() =>" in text)
 require("scheduler status reserves fixed button geometry", "#dxzxx-sched-status{height:110px;max-height:110px" in text)
@@ -30,6 +30,8 @@ require("panel configuration area uses two columns", 'class="panel-columns"' in 
 require("panel details default open", text.count("<details open") >= 5)
 require("panel action buttons use two columns", 'class="panel-actions"' in text and "grid-template-columns:repeat(2,minmax(0,1fr));gap:0 6px" in text)
 require("global stop button is permanent and reserves its row", "⏹ 停止当前操作</button>" in text and "#dxzxx-stop{grid-column:1/-1;}" in text and "dxzxx-stop\" style=\"background:#f44;color:#fff;display:none" not in text)
+require("reservation dropdowns omit redundant slot captions", '<div class="label">预定位1</div>' not in text and '<div class="label">预定位2</div>' not in text)
+require("global actions use the right-column space below scheduler", text.count('id="dxzxx-global-actions"') == 1 and text.index('id="dxzxx-sched-wrap"') < text.index('id="dxzxx-global-actions"') < text.index('每日项目（分时执行）'))
 require("autopilot refresh never inserts or removes global stop", "stopBtn.style.display" not in text)
 require("global stop is mouse only", "addEventListener('keydown'" not in text and "e.key === 'Escape'" not in text and "（Esc）" not in text)
 box_start = text.index("  MOD.box = {")
